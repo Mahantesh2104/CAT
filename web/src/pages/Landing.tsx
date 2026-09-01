@@ -69,9 +69,21 @@ export default function Landing() {
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger, refetchInterval: false })
   const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, refetchInterval: false })
   const { data: assets } = useQuery({ queryKey: ["assets"], queryFn: api.assets, refetchInterval: false })
+  const { data: risk } = useQuery({ queryKey: ["maintenance"], queryFn: api.maintenance, refetchInterval: false })
 
   const critical = alerts?.filter((a) => a.severity === "CRITICAL").length ?? 0
   const ghosts = usage?.by_site.find((s) => s.site_id === "UNASSIGNED")
+
+  // One live figure per question on the crane banner. Read from the same endpoints the
+  // rest of this page reads, so the banner cannot claim anything the board does not.
+  // A missing figure yields undefined and the banner simply carries the question alone.
+  const worst = risk?.[0]
+  const facts = [
+    critical && ledger ? `${critical} critical flags | ${inr(ledger.exposure.waste_inr)} traced` : undefined,
+    assets ? `${assets.length} machines ranked by free-from date` : undefined,
+    worst ? `${worst.equipment_id} | ${worst.current_temp_c} deg C | ${worst.days_to_failure} days` : undefined,
+    ledger ? `${inr(ledger.exposure.total_exposure_inr)} open, in three buckets` : undefined,
+  ].map((f) => f ?? "")
 
   return (
     <div className="bg-ground">
@@ -144,7 +156,7 @@ export default function Landing() {
       <section className="border-t border-hairline bg-surface">
         <div className="mx-auto max-w-[1200px] px-6 py-24 sm:py-32">
           <p className="label">02 — what it answers</p>
-          <CraneMarquee />
+          <CraneMarquee facts={facts} />
         </div>
       </section>
 
