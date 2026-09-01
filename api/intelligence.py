@@ -1,0 +1,578 @@
+"""
+PRAJWAL OWNS THIS FILE. Nobody else edits it.
+
+Rules of the house:
+  - No database. No HTTP. No file reads. No datetime.now(). Pure functions only.
+  - Everything you need arrives as arguments. Everything you produce is returned.
+  - Every verdict ships the Signals that produced it. No exceptions.
+  - Read every threshold from `config`, never from a literal in this file.
+
+Nirav calls exactly one thing:
+    bundle = analyze(assets, telemetry, bookings, config)
+
+Three deliverables:
+    1. anomalies      -> rules R1..R7, each with the fields and thresholds that fired it.
+    2. availability   -> the "can I promise Monday?" engine, incl. inter-branch transfer.
+    3. maintenance    -> coolant trend -> SPN 110 / FMI 0.
+
+Nothing here is trained and nothing here is random. Every number is arithmetic a judge
+can reproduce by hand from the fields printed on screen, and two runs are byte-identical.
+The only statistical step in the whole module is the least-squares slope in
+assess_maintenance, and its inputs are on the sparkline.
+"""
+from __future__ import annotations
+from datetime import date, datetime, timedelta
+
+import numpy as np
+
+from schemas import (
+    Asset, TelemetrySnapshot, Booking, Signal, Anomaly,
+    AvailabilityAnswer, MaintenanceRisk, IntelligenceBundle,
+)
+
+
+# ============================================================== helpers
+def utilisation(a: Asset) -> float:
+    total = a.engine_hours_day + a.idle_hours_day
+    return 0.0 if total == 0 else a.engine_hours_day / total
+
+
+def day_rate(a: Asset, config: dict) -> int:
+    """
+    The rate card is live. Read it from config so the settings screen actually moves the
+    money, and fall back to the value stamped on the asset if the type is unknown.
+
+    `rate_basis` picks between the dealer published card and the rate implied by real
+    catalogue list prices. Published is the default; price-implied is the cross-check.
+    """
+    basis = config.get("rate_basis", "published")
+    table = (config.get("day_rates_price_implied") if basis == "price_implied"
+             else config.get("day_rates")) or {}
+    return int(table.get(a.type, a.day_rate))
+
+
+def hourly_rate(a: Asset, config: dict) -> float:
+    hours = a.engine_hours_day + a.idle_hours_day or config["default_hours_per_day"]
+    return day_rate(a, config) / hours
+
+
+def idle_waste_inr(a: Asset, config: dict) -> int:
+    return int(a.idle_hours_day * a.operating_days * hourly_rate(a, config))
+
+
+def rental_line_inr(a: Asset, config: dict) -> int:
+    """The whole rental line: what the customer is billed for the days it was out."""
+    return int(day_rate(a, config) * a.operating_days)
+
+
+def days_overdue(a: Asset, now: date) -> int:
+    if not a.on_rent or a.check_in_date is None:
+        return 0
+    return max(0, (now - a.check_in_date).days)
+
+
+def branch_of(a: Asset, config: dict, default: str | None = None) -> str | None:
+    """
+    Which dealer yard this machine belongs to.
+
+    An asset with no site is unassigned - nobody knows where it is, and recovering it is
+    the recommended action anyway - so it is treated as available at the branch being
+    asked about rather than penalised for a transfer we cannot evidence.
+    """
+    if a.site_id is None:
+        return default
+    return config.get("site_branch", {}).get(a.site_id, default)
+
+
+def transit_between(origin: str | None, destination: str | None, config: dict) -> int:
+    """Days to move a machine between branches. 0 when it is already there."""
+    if origin is None or destination is None or origin == destination:
+        return 0
+    matrix = config.get("branch_transit_days", {})
+    return int(matrix.get(f"{origin}>{destination}",
+                          matrix.get(f"{destination}>{origin}", config["transit_days"])))
+
+
+def branch_label(store_id: str | None, config: dict) -> str:
+    branch = config.get("branches", {}).get(store_id or "", {})
+    return f"{store_id} {branch['city']}" if branch.get("city") else str(store_id)
+
+
+# ============================================================== 1. ANOMALIES
+def find_anomalies(assets: list[Asset], config: dict) -> list[Anomaly]:
+    now = date.fromisoformat(config["now"])
+    out: list[Anomaly] = []
+
+    for a in assets:
+
+        # ---- R1 UNASSIGNED_ACTIVE ------------------------------- WORKED EXAMPLE
+        if a.site_id is None and (a.idle_hours_day > 0 or a.engine_hours_day > 0):
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R1",
+                severity="CRITICAL",
+                title="On rent with no site assigned",
+                signals=[
+                    Signal(field="site_id", value="NULL", threshold="must not be null"),
+                    Signal(field="operator_id", value=str(a.operator_id), threshold="must not be null"),
+                    Signal(field="engine_hours_day", value=str(a.engine_hours_day)),
+                    Signal(field="idle_hours_day", value=str(a.idle_hours_day), threshold="> 0"),
+                ],
+                est_value_inr=rental_line_inr(a, config),   # whole rental line is waste
+                recommended_action="Reassign to an active site or return to yard",
+            ))
+
+        # ---- R2 IDLE_BURN ---------------------------------------------------
+        # Guarded on engine_hours_day > 0: a machine with zero output is R3's case, and
+        # firing both would bill the same rental line twice in the ledger.
+        if (a.engine_hours_day > 0
+                and utilisation(a) < config["idle_utilisation_warn"]
+                and a.operating_days >= config["idle_burn_min_days"]):
+            critical = utilisation(a) < config["idle_utilisation_crit"]
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R2",
+                severity="CRITICAL" if critical else "WARNING",
+                title="Paying for a machine that is mostly standing still",
+                signals=[
+                    Signal(field="utilisation", value=f"{utilisation(a):.1%}",
+                           threshold=f"< {config['idle_utilisation_crit']:.0%}" if critical
+                                     else f"< {config['idle_utilisation_warn']:.0%}"),
+                    Signal(field="engine_hours_day", value=str(a.engine_hours_day)),
+                    Signal(field="idle_hours_day", value=str(a.idle_hours_day)),
+                    Signal(field="operating_days", value=str(a.operating_days),
+                           threshold=f">= {config['idle_burn_min_days']}"),
+                ],
+                est_value_inr=idle_waste_inr(a, config),
+                recommended_action="Redeploy to a site with active demand",
+            ))
+
+        # ---- R3 ZERO_OUTPUT ------------------------------------- WORKED EXAMPLE
+        if a.engine_hours_day == 0 and a.operating_days >= config["zero_output_min_days"]:
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R3",
+                severity="CRITICAL",
+                title="Zero productive output across the whole rental",
+                signals=[
+                    Signal(field="engine_hours_day", value="0", threshold="> 0"),
+                    Signal(field="operating_days", value=str(a.operating_days),
+                           threshold=f">= {config['zero_output_min_days']}"),
+                ],
+                est_value_inr=rental_line_inr(a, config),
+                recommended_action="Recall the asset — it has never been worked",
+            ))
+
+        # ---- R4 WINDOW_CONFLICT --------------------------------- WORKED EXAMPLE
+        # The one Caterpillar did NOT put on their slide. Cross-field contradiction.
+        if a.check_out_date and a.check_in_date:
+            window = (a.check_in_date - a.check_out_date).days + 1
+            if a.operating_days > window:
+                out.append(Anomaly(
+                    equipment_id=a.equipment_id,
+                    rule_id="R4",
+                    severity="WARNING",
+                    title="Operating days exceed the rental window — record cannot be true",
+                    signals=[
+                        Signal(field="operating_days", value=str(a.operating_days)),
+                        Signal(field="rental_window_days", value=str(window),
+                               threshold=f"operating_days must be <= {window}"),
+                        Signal(field="check_out_date", value=str(a.check_out_date)),
+                        Signal(field="check_in_date", value=str(a.check_in_date)),
+                    ],
+                    est_value_inr=int(day_rate(a, config) * (a.operating_days - window)),
+                    recommended_action="Audit this contract — mis-logged return or unbilled extension",
+                ))
+
+        # ---- R5 SERVICE_DUE -------------------------------------------------
+        if a.hours_since_service >= config["service_interval_hours"]:
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R5",
+                severity="WARNING",
+                title="Past its service interval — do not dispatch before servicing",
+                signals=[
+                    Signal(field="hours_since_service", value=str(a.hours_since_service),
+                           threshold=f">= {config['service_interval_hours']}"),
+                    Signal(field="cumulative_operating_hours",
+                           value=str(a.cumulative_operating_hours)),
+                    Signal(field="condition_grade", value=a.condition_grade),
+                ],
+                est_value_inr=int(day_rate(a, config) * config["service_days"]),
+                recommended_action="Schedule service before next dispatch",
+            ))
+
+        # ---- R6 OVERDUE -----------------------------------------------------
+        # Uses on_rent, not projected status: status is computed in the API layer and
+        # this module is pure. on_rent is the field that carries the same meaning here.
+        overdue = days_overdue(a, now)
+        if a.on_rent and overdue > 0:
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R6",
+                severity="CRITICAL",
+                title="Past its scheduled return date and still out",
+                signals=[
+                    Signal(field="check_in_date", value=str(a.check_in_date),
+                           threshold=f"must be >= {now.isoformat()}"),
+                    Signal(field="days_overdue", value=str(overdue), threshold="> 0"),
+                    Signal(field="on_rent", value=str(a.on_rent)),
+                ],
+                est_value_inr=int(overdue * day_rate(a, config)),
+                recommended_action="Contact customer — recall or bill the extension",
+            ))
+
+        # ---- R7 NO_OPERATOR -------------------------------------------------
+        if a.operator_id is None and a.on_rent:
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R7",
+                severity="WARNING",
+                title="On rent with nobody assigned to run it",
+                signals=[
+                    Signal(field="operator_id", value="NULL", threshold="must not be null"),
+                    Signal(field="on_rent", value=str(a.on_rent), threshold="== True"),
+                    Signal(field="operating_days", value=str(a.operating_days)),
+                ],
+                est_value_inr=int(day_rate(a, config) * a.operating_days
+                                  * config["no_operator_waste_share"]),
+                recommended_action="Assign an operator or return the asset",
+            ))
+
+    return out
+
+
+# ---- what the flags are worth, without lying about it -----------------------
+# Three rules produce three DIFFERENT kinds of money, and adding them together gives a
+# number that does not survive one question. EQX1002 is a worked example: R3 says the
+# whole 20-day rental was waste (INR 440,000 already burned) while R6 says it is 43 days
+# past return (INR 946,000 you can still bill). Both are true. Their sum is meaningless.
+#
+#   waste       already burned            R1 · R2 · R3 · R7
+#   recoverable still billable / auditable R4 · R6
+#   avoided     downtime not yet incurred  R5
+#
+# Inside `waste`, several rules can fire on one machine for the same rental line, so the
+# per-asset maximum is taken rather than the sum - otherwise EQX1002 is charged twice.
+VALUE_CATEGORY = {
+    "R1": "waste", "R2": "waste", "R3": "waste", "R7": "waste",
+    "R4": "recoverable", "R6": "recoverable",
+    "R5": "avoided",
+}
+
+
+def value_summary(anomalies: list[Anomaly], config: dict) -> dict:
+    """Pure. What the ledger header should show, split by what the money actually is."""
+    buckets: dict[str, dict[str, int]] = {"waste": {}, "recoverable": {}, "avoided": {}}
+    for an in anomalies:
+        bucket = buckets[VALUE_CATEGORY.get(an.rule_id, "waste")]
+        bucket[an.equipment_id] = max(bucket.get(an.equipment_id, 0), an.est_value_inr)
+
+    totals = {name: sum(rows.values()) for name, rows in buckets.items()}
+    return {
+        "waste_inr": totals["waste"],
+        "recoverable_inr": totals["recoverable"],
+        "avoided_inr": totals["avoided"],
+        "total_exposure_inr": sum(totals.values()),
+        "by_asset": {
+            name: dict(sorted(rows.items())) for name, rows in buckets.items()
+        },
+        "note": ("waste is money already spent; recoverable is money still billable; "
+                 "avoided is downtime not yet incurred. They are not added together in "
+                 "the pitch because they are three different claims."),
+    }
+
+
+# ============================================================== 2. AVAILABILITY
+def _free_from(a: Asset, config: dict, now: date) -> date:
+    """
+    When this machine is next available from its own yard.
+
+    Clamped at NOW: EQX1007 is flagged on_rent with a check-in date of 2025-04-01, six
+    weeks in the past. Its raw free_from lands before today, which is meaningless as a
+    commitment date - the honest reading is that it is available right now.
+    """
+    if not a.on_rent:
+        free = now
+    else:
+        free = (a.check_in_date or now) + timedelta(days=config["transit_days"])
+    if a.hours_since_service >= config["service_interval_hours"]:
+        free += timedelta(days=config["service_days"])
+    return max(now, free)
+
+
+def _confidence(free: date, needed_from: date, now: date,
+                transfer: bool, config: dict) -> float:
+    if free <= now:
+        conf = config["confidence_at_yard"]
+    else:
+        slack = (needed_from - free).days
+        if slack >= config["confidence_early_days"]:
+            conf = config["confidence_early"]
+        elif slack > 0:
+            conf = config["confidence_day_before"]
+        else:
+            conf = config["confidence_tight"]
+    if transfer:
+        conf -= config["confidence_transfer_penalty"]
+    return round(conf, 2)
+
+
+def answer_availability(
+    assets: list[Asset], equipment_type: str, site_id: str,
+    needed_from: date, days: int, config: dict,
+) -> AvailabilityAnswer:
+    """
+    The judge's own example: 'a customer wants an excavator next Monday — can I commit?'
+    This is NOT a demand forecast. Do not build a bar chart.
+
+    Ranking: local before transferred, then earliest free, then best condition, then
+    lowest cumulative hours. Condition sorts A -> B -> C, so ascending is best-first.
+
+    The best answer in this dataset is EQX1007 — sitting unused, unassigned, zero output.
+    'You do not have to wait for Friday. You already have one doing nothing.'
+    """
+    now = date.fromisoformat(config["now"])
+    target_branch = config.get("site_branch", {}).get(site_id)
+    fleet = [a for a in assets if a.type.lower() == equipment_type.lower()]
+
+    candidates = []
+    for a in fleet:
+        home = branch_of(a, config, default=target_branch)
+        move = transit_between(home, target_branch, config)
+        free = _free_from(a, config, now) + timedelta(days=move)
+        candidates.append({
+            "asset": a, "free": free, "home": home,
+            "transfer": move > 0, "move_days": move,
+        })
+
+    eligible = [c for c in candidates if c["free"] <= needed_from]
+    eligible.sort(key=lambda c: (
+        c["transfer"], c["free"], c["asset"].condition_grade,
+        c["asset"].cumulative_operating_hours,
+    ))
+
+    if eligible:
+        best = eligible[0]
+        a = best["asset"]
+        conf = _confidence(best["free"], needed_from, now, best["transfer"], config)
+
+        if best["free"] <= now and not best["transfer"]:
+            if a.site_id is None:
+                reason = (f"{a.equipment_id} is already yours and doing nothing — no site, "
+                          f"no operator, {a.engine_hours_day} engine hours a day. "
+                          f"Available immediately; you do not have to wait for a return.")
+            else:
+                reason = (f"{a.equipment_id} is back at {branch_label(best['home'], config)} "
+                          f"and available immediately.")
+        elif best["transfer"]:
+            reason = (f"{a.equipment_id} frees at {branch_label(best['home'], config)} and "
+                      f"needs {best['move_days']} day(s) to reach "
+                      f"{branch_label(target_branch, config)}, available "
+                      f"{best['free'].isoformat()}.")
+        else:
+            reason = (f"{a.equipment_id} returns {a.check_in_date}, "
+                      f"{config['transit_days']} day transit, available "
+                      f"{best['free'].isoformat()}.")
+
+        alternatives = [
+            f"{c['asset'].equipment_id} also fits — free {c['free'].isoformat()}"
+            + (f" (transfer from {branch_label(c['home'], config)})" if c["transfer"] else "")
+            for c in eligible[1:1 + int(config["max_alternatives"])]
+        ]
+
+        return AvailabilityAnswer(
+            can_commit=True,
+            equipment_id=a.equipment_id,
+            free_from=best["free"],
+            confidence=conf,
+            reason=reason,
+            alternatives=alternatives,
+        )
+
+    # ---- nothing fits the date -------------------------------------------
+    alternatives: list[str] = []
+    if candidates:
+        soonest = min(candidates, key=lambda c: c["free"])
+        alternatives.append(
+            f"Earliest available {equipment_type} is "
+            f"{soonest['free'].isoformat()} ({soonest['asset'].equipment_id})"
+        )
+
+    ghosts = [a for a in fleet
+              if a.site_id is None or (a.engine_hours_day == 0
+                                       and a.operating_days >= config["zero_output_min_days"])]
+    for g in ghosts:
+        alternatives.append(
+            f"Recall {g.equipment_id} — unassigned with zero output, "
+            f"{g.idle_hours_day} idle hours a day"
+        )
+
+    working = [a for a in fleet if a.site_id is not None]
+    if working:
+        weakest = min(working, key=utilisation)
+        alternatives.append(
+            f"Extend {weakest.equipment_id} at {weakest.site_id} — "
+            f"currently at {utilisation(weakest):.0%}"
+        )
+
+    return AvailabilityAnswer(
+        can_commit=False,
+        confidence=config["confidence_tight"],
+        reason=(f"No {equipment_type} can be at {branch_label(target_branch, config)} by "
+                f"{needed_from.isoformat()} for {days} days."),
+        alternatives=alternatives,
+    )
+
+
+# ============================================================== 3. MAINTENANCE
+def _reading(snapshot, field: str):
+    """Tolerates either a TelemetrySnapshot or the raw dict it was built from."""
+    return snapshot.get(field) if isinstance(snapshot, dict) else getattr(snapshot, field)
+
+
+def _as_datetime(value) -> datetime:
+    return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+
+
+def assess_maintenance(
+    assets: list[Asset], telemetry: list[TelemetrySnapshot], config: dict,
+) -> list[MaintenanceRisk]:
+    """
+    The judge asked for this by name: 'engine temperature running too high ... because of
+    this fault code your engine is overheated, and you need to replace a certain part.'
+
+    Fire when the rolling mean of the last 24 readings exceeds coolant_warn_c AND the
+    least-squares slope over the trailing window is rising faster than coolant_slope_min.
+
+    Emit SPN 110 / FMI 0 — genuine SAE J1939, engine coolant temperature above normal,
+    most severe. Do not invent codes.
+
+    A parked machine emits no engine telemetry, so this reads the tail of each machine's
+    OPERATING series. days_to_failure is therefore operating days, not calendar days —
+    which is the number that matters, because the countdown only resumes on dispatch.
+    """
+    if not telemetry:
+        return []
+
+    by_asset: dict[str, list] = {}
+    for snap in telemetry:
+        by_asset.setdefault(_reading(snap, "equipment_id"), []).append(snap)
+
+    out: list[MaintenanceRisk] = []
+    for a in assets:
+        series = by_asset.get(a.equipment_id)
+        if not series:
+            continue
+        series = sorted(series, key=lambda s: _as_datetime(_reading(s, "datetime")))
+
+        window = int(config["rolling_window_readings"])
+        tail = series[-window:]
+        if len(tail) < window:
+            continue
+        rolling = float(np.mean([_reading(s, "engine_coolant_temp_c") for s in tail]))
+        if rolling <= config["coolant_warn_c"]:
+            continue
+
+        # Least-squares slope in degrees per day over the trailing window.
+        last_ts = _as_datetime(_reading(series[-1], "datetime"))
+        cutoff = last_ts - timedelta(days=config["slope_window_days"])
+        recent = [s for s in series if _as_datetime(_reading(s, "datetime")) >= cutoff]
+        if len(recent) < window:
+            continue
+        xs = np.array([(_as_datetime(_reading(s, "datetime")) - cutoff).total_seconds()
+                       / timedelta(days=1).total_seconds() for s in recent])
+        ys = np.array([_reading(s, "engine_coolant_temp_c") for s in recent], dtype=float)
+        slope = float(np.polyfit(xs, ys, 1)[0])
+        if slope <= config["coolant_slope_min"]:
+            continue
+
+        out.append(MaintenanceRisk(
+            equipment_id=a.equipment_id,
+            spn=110,
+            fmi=0,
+            label="Engine Coolant Temperature — data valid but above normal, most severe",
+            part="Cooling package: radiator core + thermostat",
+            action=(f"Schedule inspection before next dispatch — "
+                    f"{a.hours_since_service:g}h since last service"),
+            days_to_failure=round(
+                (config["coolant_failure_c"] - rolling) / slope, 2),
+            current_temp_c=round(rolling, 2),
+            slope=round(slope, 3),
+        ))
+    return out
+
+
+# ============================================================== THE HANDOFF
+def analyze(
+    assets: list[Asset],
+    telemetry: list[TelemetrySnapshot],
+    bookings: list[Booking],
+    config: dict,
+) -> IntelligenceBundle:
+    """The only function Nirav calls. Signature is frozen. Keep it pure."""
+    availability = None
+    if bookings:
+        b = bookings[0]
+        availability = answer_availability(
+            assets, b.equipment_type, b.site_id, b.needed_from, b.days, config
+        )
+
+    return IntelligenceBundle(
+        anomalies=find_anomalies(assets, config),
+        availability=availability,
+        maintenance=assess_maintenance(assets, telemetry, config),
+    )
+
+
+# ============================================================== smoke test
+if __name__ == "__main__":
+    import json, pathlib
+    import config as cfg
+
+    data = pathlib.Path(__file__).resolve().parent.parent / "data"
+
+    def load(name):
+        path = data / name
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+    assets = [Asset(**{k: v for k, v in a.items() if not k.startswith("_")})
+              for a in load("seed_assets.json")]
+    telemetry = [TelemetrySnapshot(**t) for t in load("seed_telemetry.json")]
+    bookings = [Booking(**b) for b in load("seed_bookings.json")]
+    conf = cfg.as_dict()
+
+    bundle = analyze(assets, telemetry, bookings, conf)
+
+    print(f"{len(assets)} assets | {len(telemetry):,} telemetry rows | {len(bookings)} bookings\n")
+    for an in sorted(bundle.anomalies, key=lambda x: (x.rule_id, x.equipment_id)):
+        print(f"{an.rule_id}  {an.equipment_id:8}  {an.severity:8}  "
+              f"INR {an.est_value_inr:>9,}  {an.title}")
+        assert an.signals, f"{an.rule_id} on {an.equipment_id} shipped no signals"
+    print(f"\n{len(bundle.anomalies)} anomalies, every one with signals attached.")
+
+    vs = value_summary(bundle.anomalies, conf)
+    print(f"\nwaste already burned      INR {vs['waste_inr']:>10,}   (R1/R2/R3/R7)")
+    print(f"still billable            INR {vs['recoverable_inr']:>10,}   (R4/R6)")
+    print(f"downtime avoided          INR {vs['avoided_inr']:>10,}   (R5)")
+    print(f"                          {'-' * 14}")
+    print(f"total exposure            INR {vs['total_exposure_inr']:>10,}")
+    zero_output = {k: v for k, v in vs["by_asset"]["waste"].items()
+                   if k in ("EQX1002", "EQX1007")}
+    print(f"the zero-output recovery claim: INR {sum(zero_output.values()):,} "
+          f"({', '.join(zero_output)})")
+
+    av = bundle.availability
+    if av:
+        print(f"\navailability: can_commit={av.can_commit} asset={av.equipment_id} "
+              f"free={av.free_from} confidence={av.confidence}")
+        print(f"  {av.reason}")
+        for alt in av.alternatives:
+            print(f"  - {alt}")
+
+    print()
+    for m in bundle.maintenance:
+        print(f"maintenance: {m.equipment_id} SPN {m.spn}/FMI {m.fmi} "
+              f"{m.current_temp_c}C rising {m.slope}C/day -> "
+              f"{m.days_to_failure} operating days to {conf['coolant_failure_c']}C")
+        print(f"  {m.part} | {m.action}")

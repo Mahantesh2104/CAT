@@ -1,0 +1,404 @@
+"""
+The API. Nine endpoints plus /health and a unified /alerts feed.
+
+Rules of the house:
+  - This file owns state and truth. It never writes a rule or a threshold.
+  - Never UPDATE a row. Append an event; derive status from the event log.
+  - Every call into intelligence.py is wrapped in try/except. If the model throws,
+    serve an empty list. A broken model must degrade, never white-screen the demo.
+  - Nothing here calls datetime.now() for business logic. Read config.NOW.
+
+  pip install -r requirements.txt
+  uvicorn main:app --reload --port 8000
+"""
+from __future__ import annotations
+import json
+import pathlib
+import uuid
+from datetime import date, datetime
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+import config as cfg
+from schemas import (
+    Asset, RentalEvent, Booking, LedgerEntry, TelemetrySnapshot, IntelligenceBundle,
+)
+import intelligence
+
+app = FastAPI(title="Smart Rental Tracking")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
+
+
+# ---- in-memory state. Swap for SQLite once the shapes are proven. -------------
+def _read(name: str) -> list:
+    path = DATA / name
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_assets() -> list[Asset]:
+    return [Asset(**{k: v for k, v in a.items() if not k.startswith("_")})
+            for a in _read("seed_assets.json")]
+
+
+def _load_telemetry() -> list[TelemetrySnapshot]:
+    """15k snapshots validate in ~50ms, so the frozen contract is honoured here."""
+    return [TelemetrySnapshot(**t) for t in _read("seed_telemetry.json")]
+
+
+def _load_bookings() -> list[Booking]:
+    return [Booking(**b) for b in _read("seed_bookings.json")]
+
+
+def _load_events() -> list[RentalEvent]:
+    return [RentalEvent(**e) for e in _read("seed_events.json")]
+
+
+ASSETS: list[Asset] = _load_assets()
+TELEMETRY: list[TelemetrySnapshot] = _load_telemetry()
+EVENTS: list[RentalEvent] = _load_events()      # APPEND ONLY. This is the audit trail.
+LEDGER: list[LedgerEntry] = []
+USAGE_LOGS: list[dict] = []              # the usage_logs table, in memory for now
+BOOKINGS: list[Booking] = _load_bookings()
+CONFIG: dict = cfg.as_dict()
+
+
+def project_status(a: Asset) -> str:
+    """Status is DERIVED, never stored. Last event wins; falls back to seed state."""
+    last = next((e for e in reversed(EVENTS) if e.equipment_id == a.equipment_id), None)
+    if last:
+        if last.event_type in ("CHECK_IN", "RETURN_TO_YARD"):
+            return "AT_YARD"
+        if last.event_type == "ASSIGN":
+            return "ACTIVE"
+    if not a.on_rent:
+        return "AT_YARD"
+    if a.site_id is None:
+        return "UNASSIGNED"
+    now = date.fromisoformat(CONFIG["now"])
+    if a.check_in_date and now > a.check_in_date:
+        return "OVERDUE"
+    return "ACTIVE" if a.engine_hours_day > 0 else "IDLE"
+
+
+def _safe_bundle() -> IntelligenceBundle:
+    """The model is allowed to fail. The demo is not."""
+    try:
+        return intelligence.analyze(ASSETS, TELEMETRY, BOOKINGS, CONFIG)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"[intelligence] degraded: {exc}")
+        return IntelligenceBundle()
+
+
+def _find(equipment_id: str) -> Asset:
+    a = next((x for x in ASSETS if x.equipment_id == equipment_id), None)
+    if not a:
+        raise HTTPException(404, f"unknown asset {equipment_id}")
+    return a
+
+
+def _deep_merge(target: dict, patch: dict) -> dict:
+    """
+    Nested dicts merge instead of replacing.
+
+    Without this, PUT /config {"day_rates": {"Excavator": 30000}} wipes the other three
+    rates - which is the exact moment a judge is watching the numbers recompute.
+    """
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+    return target
+
+
+# ------------------------------------------------------------------ endpoints
+@app.get("/health")
+def health():
+    """First thing to build, first thing to check on the venue wifi."""
+    return {
+        "ok": True,
+        "now": CONFIG["now"],
+        "assets": len(ASSETS),
+        "telemetry_snapshots": len(TELEMETRY),
+        "events": len(EVENTS),
+        "bookings": len(BOOKINGS),
+    }
+
+
+@app.get("/assets")
+def list_assets():
+    flags = _safe_bundle().anomalies
+    return [{
+        "equipment_id": a.equipment_id, "type": a.type, "status": project_status(a),
+        "site_id": a.site_id, "branch_id": CONFIG["site_branch"].get(a.site_id or ""),
+        "operator_id": a.operator_id,
+        "utilization_pct": round(a.utilisation * 100, 1),
+        "engine_hours_day": a.engine_hours_day, "idle_hours_day": a.idle_hours_day,
+        "due_back": a.check_in_date, "day_rate": intelligence.day_rate(a, CONFIG),
+        "flags_count": sum(1 for f in flags if f.equipment_id == a.equipment_id),
+    } for a in ASSETS]
+
+
+@app.get("/assets/{equipment_id}")
+def get_asset(equipment_id: str):
+    a = _find(equipment_id)
+    bundle = _safe_bundle()
+    return {
+        "asset": a, "status": project_status(a),
+        "signals": [f for f in bundle.anomalies if f.equipment_id == equipment_id],
+        "events": [e for e in EVENTS if e.equipment_id == equipment_id],
+        "telemetry_series": _daily_series(equipment_id),
+        "maintenance": [m for m in bundle.maintenance if m.equipment_id == equipment_id],
+    }
+
+
+def _daily_series(equipment_id: str) -> list[dict]:
+    """Daily means for the sparkline. Hourly raw would be 720 points for one chart."""
+    days: dict[str, list[float]] = {}
+    hours: dict[str, float] = {}
+    for t in TELEMETRY:
+        if t.equipment_id != equipment_id:
+            continue
+        key = t.datetime.date().isoformat()
+        days.setdefault(key, []).append(t.engine_coolant_temp_c)
+        hours[key] = t.cumulative_operating_hours
+    return [{
+        "date": day,
+        "coolant_temp_c": round(sum(temps) / len(temps), 2),
+        "cumulative_operating_hours": round(hours[day], 1),
+    } for day, temps in sorted(days.items())]
+
+
+class EventIn(BaseModel):
+    equipment_id: str
+    event_type: str
+    actor: str
+    site_id: Optional[str] = None
+    operator_id: Optional[str] = None
+    condition_grade: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.post("/events", status_code=201)
+def append_event(body: EventIn):
+    a = _find(body.equipment_id)
+    ev = RentalEvent(event_id=str(uuid.uuid4()), timestamp=datetime.now(), **body.model_dump())
+    EVENTS.append(ev)                                  # append only, never update
+    if body.event_type in ("CHECK_IN", "RETURN_TO_YARD"):
+        a.on_rent = False
+    if body.event_type == "ASSIGN" and body.site_id:
+        a.site_id, a.operator_id = body.site_id, body.operator_id
+    if body.condition_grade:
+        a.condition_grade = body.condition_grade
+    return {"event": ev, "status": project_status(a)}
+
+
+# ---- readable wrappers over the one write path (NIRAV_RECONCILE §A) ----------
+# Each takes the body NIRAV_BUILD.md specifies - the caller never sends an event_type,
+# the route supplies it - and each writes exactly one row into events.
+class CheckoutIn(BaseModel):
+    equipment_id: str
+    actor: str
+    site_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AssignIn(BaseModel):
+    equipment_id: str
+    site_id: str
+    operator_id: Optional[str] = None
+    actor: str
+    notes: Optional[str] = None
+
+
+class UsageIn(BaseModel):
+    equipment_id: str
+    engine_hours: float
+    idle_hours: float
+    actor: str
+    notes: Optional[str] = None
+
+
+class CheckinIn(BaseModel):
+    equipment_id: str
+    condition_grade: Optional[str] = None
+    notes: Optional[str] = None
+    actor: str
+
+
+@app.post("/checkout", status_code=201)
+def checkout(body: CheckoutIn):
+    a = _find(body.equipment_id)
+    a.on_rent = True
+    return append_event(EventIn(event_type="CHECK_OUT", **body.model_dump()))
+
+
+@app.post("/assign", status_code=201)
+def assign(body: AssignIn):
+    return append_event(EventIn(event_type="ASSIGN", **body.model_dump()))
+
+
+@app.post("/log-usage", status_code=201)
+def log_usage(body: UsageIn):
+    """One USAGE_LOG event plus one usage_logs row, exactly as the spec states."""
+    a = _find(body.equipment_id)
+    log_date = date.fromisoformat(CONFIG["now"])
+    latest = next((t for t in reversed(TELEMETRY)
+                   if t.equipment_id == body.equipment_id), None)
+    USAGE_LOGS.append({
+        "log_id": str(uuid.uuid4()),
+        "equipment_id": body.equipment_id,
+        "log_date": log_date.isoformat(),
+        "engine_hours": body.engine_hours,
+        "idle_hours": body.idle_hours,
+        "engine_coolant_temp_c": latest.engine_coolant_temp_c if latest else None,
+        "fuel_remaining_percent": latest.fuel_remaining_percent if latest else None,
+        "is_operating_day": body.engine_hours > 0,
+    })
+    result = append_event(EventIn(
+        event_type="USAGE_LOG", equipment_id=body.equipment_id, actor=body.actor,
+        notes=body.notes or f"{body.engine_hours}h engine / {body.idle_hours}h idle",
+    ))
+    return {**result, "usage_log": USAGE_LOGS[-1]}
+
+
+@app.get("/usage-logs")
+def usage_logs(equipment_id: Optional[str] = None):
+    return [u for u in USAGE_LOGS
+            if equipment_id is None or u["equipment_id"] == equipment_id]
+
+
+@app.post("/checkin", status_code=201)
+def checkin(body: CheckinIn):
+    return append_event(EventIn(event_type="CHECK_IN", **body.model_dump()))
+
+
+@app.get("/anomalies")
+def anomalies():
+    return _safe_bundle().anomalies
+
+
+@app.get("/alerts")
+def alerts():
+    """
+    One feed, not two systems. Overdue, anomaly and maintenance in the order a dealer
+    would work them: critical first, then by money at stake.
+    """
+    bundle = _safe_bundle()
+    # R6 IS the overdue signal, so it is tagged source=OVERDUE rather than emitted a
+    # second time from the projection - the same machine must not appear twice.
+    rows = [{
+        "source": "OVERDUE" if a.rule_id == "R6" else "ANOMALY",
+        "equipment_id": a.equipment_id, "rule_id": a.rule_id,
+        "severity": a.severity, "title": a.title, "est_value_inr": a.est_value_inr,
+        "recommended_action": a.recommended_action,
+        "signals": [s.model_dump() for s in a.signals],
+    } for a in bundle.anomalies]
+    rows += [{
+        "source": "MAINTENANCE", "equipment_id": m.equipment_id,
+        "rule_id": f"SPN{m.spn}/FMI{m.fmi}", "severity": "CRITICAL", "title": m.label,
+        "est_value_inr": 0, "recommended_action": m.action,
+        "signals": [
+            {"field": "engine_coolant_temp_c", "value": str(m.current_temp_c),
+             "threshold": f"> {CONFIG['coolant_warn_c']}"},
+            {"field": "slope_c_per_day", "value": str(m.slope),
+             "threshold": f"> {CONFIG['coolant_slope_min']}"},
+            {"field": "days_to_failure", "value": str(m.days_to_failure)},
+        ],
+    } for m in bundle.maintenance]
+    order = {"CRITICAL": 0, "WARNING": 1, "INFO": 2}
+    rows.sort(key=lambda r: (order.get(r["severity"], 9), -r["est_value_inr"]))
+    return rows
+
+
+@app.get("/availability")
+def availability(
+    type: str = Query(..., description="Excavator | Bulldozer | Crane | Grader"),
+    site: str = Query(...),
+    from_: str = Query(default=None, alias="from"),
+    days: int = 10,
+):
+    needed = date.fromisoformat(from_) if from_ else (
+        BOOKINGS[0].needed_from if BOOKINGS else date.fromisoformat(CONFIG["now"])
+    )
+    b = Booking(booking_id="B1", customer="demo", equipment_type=type,
+                site_id=site, needed_from=needed, days=days)
+    BOOKINGS.clear()
+    BOOKINGS.append(b)
+    return _safe_bundle().availability
+
+
+@app.get("/bookings")
+def get_bookings():
+    return BOOKINGS
+
+
+@app.get("/maintenance-risk")
+def maintenance_risk():
+    return _safe_bundle().maintenance
+
+
+@app.get("/ledger")
+def get_ledger():
+    """
+    Two numbers, kept apart on purpose.
+
+    `total_recovered_inr` is what the operator has actually actioned in this session.
+    `exposure` is what the open flags are worth, split into money already burned, money
+    still billable, and downtime avoided - because adding those three together produces
+    a figure that does not survive the first question about it.
+    """
+    bundle = _safe_bundle()
+    return {
+        "entries": LEDGER,
+        "total_recovered_inr": sum(e.est_value_inr for e in LEDGER),
+        "exposure": intelligence.value_summary(bundle.anomalies, CONFIG),
+    }
+
+
+class LedgerIn(BaseModel):
+    equipment_id: str
+    action: str
+    est_value_inr: int
+    rule_id: Optional[str] = None
+
+
+@app.post("/ledger", status_code=201)
+def add_ledger(body: LedgerIn):
+    entry = LedgerEntry(entry_id=str(uuid.uuid4()), timestamp=datetime.now(), **body.model_dump())
+    LEDGER.append(entry)
+    return entry
+
+
+@app.get("/config")
+def get_config():
+    return CONFIG
+
+
+@app.put("/config")
+def put_config(patch: dict):
+    """Judge changes a day rate live and the ledger recomputes. Do not skip this."""
+    _deep_merge(CONFIG, patch)
+    return CONFIG
+
+
+@app.post("/reset")
+def reset():
+    """One key restores exact demo state. Bind it to a button before rehearsal."""
+    global ASSETS, TELEMETRY, EVENTS, BOOKINGS
+    ASSETS = _load_assets()
+    TELEMETRY = _load_telemetry()
+    EVENTS = _load_events()
+    BOOKINGS = _load_bookings()
+    LEDGER.clear()
+    USAGE_LOGS.clear()
+    CONFIG.clear()
+    CONFIG.update(cfg.as_dict())
+    return {"ok": True, "assets": len(ASSETS), "events": len(EVENTS)}
