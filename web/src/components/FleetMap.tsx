@@ -81,6 +81,21 @@ export default function FleetMap({
       (a, b) => (b.flags_count - a.flags_count) || (a.utilization_pct - b.utilization_pct),
     )[0]
 
+  // Same thresholds the rules use, so a bar on this card and a bar in the table agree.
+  const warnPct = (config?.idle_utilisation_warn ?? 0.35) * 100
+  const critPct = (config?.idle_utilisation_crit ?? 0.2) * 100
+
+  // What is actually working right now, grouped by type. The card above shows the
+  // machine that needs attention; this shows the fleet that does not - a dealer needs
+  // both, and the board only ever surfaced the problems.
+  const working = located.filter((a) => a.status === "ACTIVE")
+  const byType = Object.entries(
+    working.reduce<Record<string, AssetRow[]>>((m, a) => {
+      (m[a.type] ??= []).push(a)
+      return m
+    }, {}),
+  ).sort((a, b) => b[1].length - a[1].length)
+
   // Bounds from everything we plot, so branches never fall outside the frame.
   const lats = [...located.map((a) => a.latitude as number), ...branches.map(([, b]) => b.lat)]
   const lons = [...located.map((a) => a.longitude as number), ...branches.map(([, b]) => b.lon)]
@@ -271,6 +286,73 @@ export default function FleetMap({
           })}
         </svg>
       </div>
+      )}
+
+      {view === "globe" && working.length > 0 && (
+        <div className="border-t border-hairline">
+          <header className="flex flex-wrap items-baseline justify-between gap-3 px-5 pt-3.5">
+            <h4 className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel">
+              Working right now
+            </h4>
+            <span className="label">
+              {working.length} assigned and producing · hover to locate
+            </span>
+          </header>
+
+          <div className="grid gap-px bg-hairline p-px sm:grid-cols-2 lg:grid-cols-4">
+            {byType.map(([type, machines]) => (
+              <div key={type} className="bg-surface px-4 py-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <MachineSilhouette type={type} tone="#3ddc97" className="h-[38px] w-auto" />
+                  <div className="text-right">
+                    <p className="num text-[19px] font-semibold leading-none text-nominal">
+                      {machines.length}
+                    </p>
+                    <p className="label mt-1">{type}</p>
+                  </div>
+                </div>
+
+                <ul className="mt-3 flex flex-col gap-1.5 border-t border-hairline pt-2.5">
+                  {machines
+                    .slice()
+                    .sort((a, b) => b.utilization_pct - a.utilization_pct)
+                    .map((m) => (
+                      <li key={m.equipment_id}>
+                        <button
+                          onMouseEnter={() => setFocusId(m.equipment_id)}
+                          onClick={() => setFocusId(m.equipment_id)}
+                          className={cn(
+                            "flex w-full items-baseline gap-2 text-left transition-colors",
+                            focusId === m.equipment_id ? "text-hazard" : "hover:text-chalk",
+                          )}
+                        >
+                          <span className="num text-[12px] font-medium text-chalk">
+                            {m.equipment_id}
+                          </span>
+                          <span className="num text-[11px] text-slate">{m.site_id}</span>
+                          <span className="num ml-auto text-[11.5px] text-nominal">
+                            {m.utilization_pct.toFixed(0)}%
+                          </span>
+                        </button>
+                        {/* utilisation as a bar, so a weak one is visible without reading */}
+                        <span className="mt-1 block h-[3px] w-full bg-hairline">
+                          <span
+                            className="block h-full"
+                            style={{
+                              width: `${Math.min(100, m.utilization_pct)}%`,
+                              background: m.utilization_pct < critPct
+                                ? "#ff5b45"
+                                : m.utilization_pct < warnPct ? "#ffab2e" : "#3ddc97",
+                            }}
+                          />
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-hairline px-5 py-3">
