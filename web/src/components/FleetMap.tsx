@@ -74,12 +74,17 @@ export default function FleetMap({
   const branches = Object.entries(config?.branches ?? {})
 
 
-  // Default to the machine that most needs a person: the one carrying the largest single
-  // claim. Hovering a marker on the globe takes over.
+  // Default to a machine that is EARNING: assigned, producing, best utilisation of the
+  // working fleet. The flags panel already carries everything that is wrong; opening on
+  // a broken machine made the board look like nothing was working at all.
+  // Hovering any marker - including a red one - still takes over.
   const focus = located.find((a) => a.equipment_id === focusId)
-    ?? [...located].sort(
-      (a, b) => (b.flags_count - a.flags_count) || (a.utilization_pct - b.utilization_pct),
-    )[0]
+    ?? [...located]
+      .sort((a, b) => {
+        const aw = a.status === "ACTIVE" ? 0 : 1
+        const bw = b.status === "ACTIVE" ? 0 : 1
+        return aw - bw || b.utilization_pct - a.utilization_pct
+      })[0]
 
   // Same thresholds the rules use, so a bar on this card and a bar in the table agree.
   const warnPct = (config?.idle_utilisation_warn ?? 0.35) * 100
