@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import MetroHero from "@/components/ui/scroll-locked-video-hero"
+import MachineReveal from "@/components/MachineReveal"
 import { api } from "@/lib/api"
 import { cn, inr } from "@/lib/utils"
 
@@ -57,6 +58,9 @@ export default function Landing() {
     <div className="bg-ground">
       <MetroHero
         videoSrc={hasVideo ? HERO_VIDEO : undefined}
+        // The scrub always has something to reveal, video or not: the machine draws
+        // itself in and its flagged fields attach on leader lines, one at a time.
+        stage={!hasVideo ? <MachineReveal id="EQX1007" /> : undefined}
         kicker="CATERPILLAR · SMART RENTAL TRACKING"
         title="EVERY MACHINE, ACCOUNTED FOR"
         tagline="Two of your machines are on rent to nobody."

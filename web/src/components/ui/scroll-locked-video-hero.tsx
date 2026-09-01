@@ -37,6 +37,13 @@ export interface MetroHeroProps {
   releaseOvershoot?: number
   /** Fires the first time the scrub completes. */
   onComplete?: () => void
+  /**
+   * Anything that should be revealed by the scrub. It is rendered inside the hero and
+   * can animate off the --reveal custom property (0 to 1) that this component writes on
+   * the section every frame - no React state, so the scrub stays on the compositor.
+   * Providing a stage arms the scroll lock even when there is no video.
+   */
+  stage?: React.ReactNode
   children?: React.ReactNode
   className?: string
   style?: React.CSSProperties
@@ -64,6 +71,7 @@ export default function MetroHero({
   scrubDistance = 3200,
   releaseOvershoot = 260,
   onComplete,
+  stage,
   children,
   className,
   style,
@@ -76,6 +84,7 @@ export default function MetroHero({
   const progressBarRef = useRef<HTMLDivElement>(null)
   const readoutRef = useRef<HTMLSpanElement>(null)
   const [ready, setReady] = useState(false)
+  const hasStage = Boolean(stage)
 
   useEffect(() => {
     const video = videoRef.current
@@ -160,7 +169,8 @@ export default function MetroHero({
       window.scrollTo(0, y)
     }
 
-    if (!reduceMotion && videoSrc) engageLock()
+    const hasSomethingToScrub = Boolean(videoSrc) || hasStage
+    if (!reduceMotion && hasSomethingToScrub) engageLock()
 
     function addDelta(deltaY: number) {
       if (!locked) return
@@ -191,7 +201,7 @@ export default function MetroHero({
       if (!locked) {
         // Scrolling back up into the hero re-engages the scrub, exactly as the
         // original header comment promised.
-        if (window.scrollY <= 0 && e.deltaY < 0 && videoSrc && !reduceMotion) {
+        if (window.scrollY <= 0 && e.deltaY < 0 && hasSomethingToScrub && !reduceMotion) {
           engageLock()
           targetProgress = 1
           e.preventDefault()
@@ -210,7 +220,7 @@ export default function MetroHero({
       const deltaY = touchStartY - y
       touchStartY = y
       if (!locked) {
-        if (window.scrollY <= 0 && deltaY < 0 && videoSrc && !reduceMotion) {
+        if (window.scrollY <= 0 && deltaY < 0 && hasSomethingToScrub && !reduceMotion) {
           engageLock()
           targetProgress = 1
           e.preventDefault()
@@ -265,6 +275,10 @@ export default function MetroHero({
       if (progressBarRef.current) {
         progressBarRef.current.style.transform = `scaleX(${currentProgress})`
       }
+      // The one value every revealed element reads. Written as a CSS custom property
+      // so children animate without a React render on any frame.
+      sectionRef.current?.style.setProperty("--reveal", currentProgress.toFixed(4))
+
       if (readoutRef.current) {
         readoutRef.current.textContent = String(Math.round(currentProgress * 100)).padStart(3, "0")
       }
@@ -286,7 +300,7 @@ export default function MetroHero({
       cancelAnimationFrame(rafId)
       releaseLock()
     }
-  }, [scrubDistance, videoSrc, releaseOvershoot, onComplete])
+  }, [scrubDistance, videoSrc, releaseOvershoot, onComplete, hasStage])
 
   return (
     <div
@@ -376,6 +390,23 @@ export default function MetroHero({
         }}
       />
 
+      {stage && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            // Sits above centre so the tagline has the lower third to itself.
+            padding: "0 4% 16vh",
+            pointerEvents: "none",
+          }}
+        >
+          {stage}
+        </div>
+      )}
+
       <div
         ref={titleRef}
         style={{
@@ -422,11 +453,14 @@ export default function MetroHero({
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            justifyContent: "center",
-            padding: "0 8%",
+            // With a stage behind it the payoff drops to the lower third: centred, it
+            // lands squarely on top of the machine it is describing.
+            justifyContent: stage ? "flex-end" : "center",
+            paddingBottom: stage ? "13vh" : undefined,
+            padding: stage ? "0 8% 13vh" : "0 8%",
             textAlign: "center",
             opacity: 0,
-            gap: 26,
+            gap: 22,
           }}
         >
           <span
