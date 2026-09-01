@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useResilientQuery } from "@/lib/useResilientQuery"
 import { api } from "@/lib/api"
@@ -10,6 +11,7 @@ import ValueLedger from "@/components/ValueLedger"
 import FleetAnalytics from "@/components/FleetAnalytics"
 import FleetBriefing from "@/components/FleetBriefing"
 import FleetMap from "@/components/FleetMap"
+import MetricReport, { type MetricKey } from "@/components/MetricReport"
 
 const RANK: Record<string, number> = {
   OVERDUE: 0, UNASSIGNED: 1, IDLE: 2, IN_SERVICE: 3, ACTIVE: 4, AT_YARD: 5,
@@ -22,6 +24,8 @@ export default function FleetBoard() {
   const { data: usage } = useQuery({ queryKey: ["usage"], queryFn: api.usage })
   const { data: maintenance } = useQuery({ queryKey: ["maintenance"], queryFn: api.maintenance })
   const { data: brief } = useQuery({ queryKey: ["briefing"], queryFn: api.briefing })
+  const { data: anomalies } = useQuery({ queryKey: ["anomalies"], queryFn: api.anomalies })
+  const [report, setReport] = useState<MetricKey | null>(null)
 
   // Red rows first. A board that sorts alphabetically makes the operator do the triage.
   const rows = [...(assets ?? [])].sort(
@@ -65,20 +69,33 @@ export default function FleetBoard() {
 
   return (
     <div className="flex min-w-0 flex-col gap-7">
-      <FleetBriefing briefing={brief} />
+      <MetricReport
+        metric={report}
+        onClose={() => setReport(null)}
+        data={{
+          assets: assets ?? [], anomalies: anomalies ?? [],
+          maintenance: maintenance ?? [], usage, ledger,
+        }}
+      />
+
+      <FleetBriefing briefing={brief} onDrill={setReport} />
 
       {/* fleet-level readout */}
       <section className="grid gap-px bg-hairline sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { k: "machines on the board", v: String(assets?.length ?? "—") },
-          { k: "fleet utilisation", v: usage ? `${usage.fleet.utilisation_pct}%` : "—" },
-          { k: "downtime hours", v: usage ? usage.fleet.downtime_hours.toLocaleString("en-IN") : "—" },
-          { k: "open exposure", v: ledger ? inr(ledger.exposure.total_exposure_inr) : "—" },
-        ].map((s) => (
-          <div key={s.k} className="bg-surface px-5 py-4">
-            <p className="label">{s.k}</p>
+        {([
+          { k: "machines on the board", m: "machines", v: String(assets?.length ?? "—") },
+          { k: "fleet utilisation", m: "utilisation", v: usage ? `${usage.fleet.utilisation_pct}%` : "—" },
+          { k: "downtime hours", m: "downtime", v: usage ? usage.fleet.downtime_hours.toLocaleString("en-IN") : "—" },
+          { k: "open exposure", m: "exposure", v: ledger ? inr(ledger.exposure.total_exposure_inr) : "—" },
+        ] as const).map((s) => (
+          <button
+            key={s.k}
+            onClick={() => setReport(s.m)}
+            className="group bg-surface px-5 py-4 text-left transition-colors hover:bg-raised"
+          >
+            <p className="label group-hover:text-hazard">{s.k} →</p>
             <p className="num mt-1.5 text-[27px] font-semibold leading-none text-chalk">{s.v}</p>
-          </div>
+          </button>
         ))}
       </section>
 

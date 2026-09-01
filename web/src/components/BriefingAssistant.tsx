@@ -64,18 +64,20 @@ export default function BriefingAssistant() {
   const suggestions = meta?.suggestions ?? []
 
   return (
-    <div className="border-t border-hairline">
-      <header className="flex flex-wrap items-baseline justify-between gap-3 px-5 pt-4">
+    // Sits beside the briefing lines, so it is a column that fills its height rather
+    // than a band across the bottom. The parent owns the divider.
+    <div className="flex h-full min-w-0 flex-col">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-5 pt-5">
         <h4 className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel">
           Ask the briefing
         </h4>
         <span className="label">
-          answers come from the figures above{meta?.model_available ? "" : " · offline mode"}
+          {meta?.model_available ? "grounded in the figures" : "offline mode"}
         </span>
       </header>
 
       {turns.length > 0 && (
-        <div ref={listRef} className="mt-3 max-h-[320px] overflow-y-auto px-5">
+        <div ref={listRef} className="mt-3 max-h-[300px] flex-1 overflow-y-auto px-5">
           <div className="flex flex-col gap-4">
             {turns.map((t, i) => (
               <div key={i} className="flex flex-col gap-2">
@@ -134,7 +136,7 @@ export default function BriefingAssistant() {
       )}
 
       {turns.length === 0 && suggestions.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2 px-5">
+        <div className="mt-3 flex flex-col gap-1.5 px-5">
           {suggestions.map((s) => (
             <button
               key={s}
@@ -149,7 +151,7 @@ export default function BriefingAssistant() {
 
       <form
         onSubmit={(e) => { e.preventDefault(); ask(q) }}
-        className="mt-3 flex gap-2 border-t border-hairline px-5 py-3"
+        className="mt-auto flex gap-2 border-t border-hairline px-5 py-3"
       >
         <label htmlFor="ask-fleet" className="sr-only">Ask a question about the fleet</label>
         <input
