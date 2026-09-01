@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import MetroHero from "@/components/ui/scroll-locked-video-hero"
-import MachineReveal from "@/components/MachineReveal"
+import MachineExploded from "@/components/MachineExploded"
 import { api } from "@/lib/api"
 import { cn, inr } from "@/lib/utils"
 
@@ -45,8 +45,24 @@ function Spec({ n, k, v, tone }: { n: string; k: string; v: string; tone?: strin
   )
 }
 
+/** Half travel below 640px, or the parts fly off-canvas before the cab has moved. */
+function useCompact() {
+  const [compact, setCompact] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= 640 : false,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)")
+    const on = () => setCompact(mq.matches)
+    on()
+    mq.addEventListener("change", on)
+    return () => mq.removeEventListener("change", on)
+  }, [])
+  return compact
+}
+
 export default function Landing() {
   const hasVideo = useHasVideo(HERO_VIDEO)
+  const compact = useCompact()
   const { data: usage } = useQuery({ queryKey: ["usage"], queryFn: api.usage, refetchInterval: false })
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger, refetchInterval: false })
   const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, refetchInterval: false })
@@ -58,14 +74,15 @@ export default function Landing() {
     <div className="bg-ground">
       <MetroHero
         videoSrc={hasVideo ? HERO_VIDEO : undefined}
-        // The scrub always has something to reveal, video or not: the machine draws
-        // itself in and its flagged fields attach on leader lines, one at a time.
-        stage={!hasVideo ? <MachineReveal id="EQX1007" /> : undefined}
+        // The scrub always has something to reveal, video or not. The machine comes
+        // apart along its real assembly axes and each separated component carries the
+        // telemetry that component actually emits.
+        stage={!hasVideo ? <MachineExploded id="EQX1007" compact={compact} /> : undefined}
         kicker="CATERPILLAR · SMART RENTAL TRACKING"
         title="EVERY MACHINE, ACCOUNTED FOR"
         tagline="Two of your machines are on rent to nobody."
-        scrollHint="SCROLL TO REVEAL"
-        scrubDistance={2600}
+        scrollHint="SCROLL TO DISMANTLE"
+        scrubDistance={3400}
         signature={false}
       >
         <Link

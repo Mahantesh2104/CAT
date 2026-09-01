@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import RotatingEarth, { type GlobeMarker } from "@/components/ui/wireframe-dotted-globe"
 import type { AssetRow, Config } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -28,10 +29,38 @@ export default function FleetMap({
   assets, config,
 }: { assets: AssetRow[]; config?: Config }) {
   const [hover, setHover] = useState<AssetRow | null>(null)
+  const [view, setView] = useState<"globe" | "plot">("globe")
 
   const located = assets.filter(
     (a) => typeof a.latitude === "number" && typeof a.longitude === "number",
   )
+
+  // One marker per machine plus one per branch, so the globe carries the same truth as
+  // the plot. Machines that need action are emphasised rather than merely coloured.
+  const globeMarkers = useMemo<GlobeMarker[]>(() => {
+    const machines = located.map((a) => ({
+      id: a.equipment_id,
+      lat: a.latitude as number,
+      lon: a.longitude as number,
+      tone: TONE[a.status] ?? "#9aa5b6",
+      label: a.equipment_id,
+      detail: `${a.type} · ${a.status}`,
+      emphasis: a.status === "OVERDUE" || a.status === "UNASSIGNED",
+    }))
+    const yards = Object.entries(config?.branches ?? {}).map(([id, b]) => ({
+      id,
+      lat: b.lat,
+      lon: b.lon,
+      tone: "#ffcd11",
+      label: `${id} ${b.city}`,
+      detail: "dealer branch",
+    }))
+    return [...yards, ...machines]
+  }, [located, config])
+
+  // Every hook above this line: the early return below runs on the first render, when
+  // assets is still empty, and a hook after it would change the hook count once the
+  // data lands. That is exactly the error the boundary caught.
   if (!located.length) {
     return (
       <section className="border border-hairline bg-surface px-5 py-10 text-center">
@@ -41,6 +70,7 @@ export default function FleetMap({
   }
 
   const branches = Object.entries(config?.branches ?? {})
+
 
   // Bounds from everything we plot, so branches never fall outside the frame.
   const lats = [...located.map((a) => a.latitude as number), ...branches.map(([, b]) => b.lat)]
@@ -64,9 +94,38 @@ export default function FleetMap({
             Where the fleet is
           </h3>
         </div>
-        <span className="label">{located.length} position fixes · 4 branches</span>
+        <div className="flex items-center gap-3">
+          <span className="label">{located.length} fixes · 4 branches</span>
+          <div className="flex">
+            {(["globe", "plot"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={cn(
+                  "border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
+                  view === v
+                    ? "border-hazard/60 bg-hazard/10 text-hazard"
+                    : "border-hairline-bright text-slate hover:text-chalk",
+                )}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
       </header>
 
+      {/* The globe is the arresting view; the flat plot is the one you read positions
+          off. Both draw from the same fixes, so neither can disagree with the other. */}
+      {view === "globe" ? (
+        <div className="p-4">
+          <RotatingEarth
+            markers={globeMarkers}
+            focus={[78, 21]}
+            height={520}
+          />
+        </div>
+      ) : (
       <div className="relative p-4">
         {hover && (
           <div className="pointer-events-none absolute z-10 border border-hairline-bright bg-ground px-3 py-2"
@@ -137,6 +196,7 @@ export default function FleetMap({
           })}
         </svg>
       </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-hairline px-5 py-3">
         {[
