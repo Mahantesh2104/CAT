@@ -13,6 +13,15 @@ import path from "path"
  *                      could only ever show its fallback.
  *
  * The certificate is self-signed, so the phone shows a warning once — tap through it.
+ *
+ * Phone mode also PROXIES THE API through this server, and it has to. The browser base
+ * URL is baked in at build time, and on a phone "localhost:8000" is the phone itself, so
+ * every call would fail; pointing it at the laptop's LAN address instead fails a second
+ * time, because a page served over https may not call http — the browser blocks it as
+ * mixed content before the request leaves. Proxying makes the API same-origin: the phone
+ * calls https://<laptop>:5199/api/... and this server forwards it to the API on the
+ * laptop's own loopback. No mixed content, no CORS, and nothing to configure per venue.
+ * `.env.phone` sets VITE_API_URL=/api to match.
  */
 export default defineConfig(({ mode }) => {
   const phone = mode === "phone"
@@ -23,6 +32,15 @@ export default defineConfig(({ mode }) => {
       port: 5199,
       strictPort: true,
       host: phone ? true : "localhost",
+      proxy: phone
+        ? {
+            "/api": {
+              target: "http://localhost:8000",
+              changeOrigin: true,
+              rewrite: (p) => p.replace(/^\/api/, ""),
+            },
+          }
+        : undefined,
     },
   }
 })
