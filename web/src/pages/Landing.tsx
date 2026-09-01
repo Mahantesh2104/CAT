@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import MetroHero from "@/components/ui/scroll-locked-video-hero"
 import MachineExploded from "@/components/MachineExploded"
+import MachineWall from "@/components/MachineWall"
 import { api } from "@/lib/api"
 import { cn, inr } from "@/lib/utils"
 
@@ -66,6 +67,7 @@ export default function Landing() {
   const { data: usage } = useQuery({ queryKey: ["usage"], queryFn: api.usage, refetchInterval: false })
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger, refetchInterval: false })
   const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, refetchInterval: false })
+  const { data: assets } = useQuery({ queryKey: ["assets"], queryFn: api.assets, refetchInterval: false })
 
   const critical = alerts?.filter((a) => a.severity === "CRITICAL").length ?? 0
   const ghosts = usage?.by_site.find((s) => s.site_id === "UNASSIGNED")
@@ -96,16 +98,27 @@ export default function Landing() {
       {/* ---------------- the problem, in the dealer's own vocabulary ------------- */}
       <section className="blueprint border-t border-hairline">
         <div className="mx-auto max-w-[1200px] px-6 py-24 sm:py-32">
-          <p className="label">01 — the problem</p>
-          <h2 className="mt-5 max-w-[22ch] text-[clamp(28px,5vw,58px)] font-bold leading-[1.02] tracking-tight text-chalk">
-            A rented machine that nobody is watching is a machine you are paying for twice.
-          </h2>
-          <p className="mt-7 max-w-[62ch] text-[17px] leading-relaxed text-steel">
-            Dealers rent equipment out and then lose sight of it. Where it is, who is running
-            it, when it is due back — still a spreadsheet, still manual, still discovered too
-            late. This console reads the telemetry those machines already emit and turns it
-            into the four decisions a dealer actually makes.
-          </p>
+          {/* The right of this section was empty at desktop width. The wall fills it with
+              the actual fleet rather than stock plant, so it argues the same point the
+              paragraph does. */}
+          <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="min-w-0">
+              <p className="label">01 — the problem</p>
+              <h2 className="mt-5 max-w-[22ch] text-[clamp(28px,5vw,58px)] font-bold leading-[1.02] tracking-tight text-chalk">
+                A rented machine that nobody is watching is a machine you are paying for twice.
+              </h2>
+              <p className="mt-7 max-w-[62ch] text-[17px] leading-relaxed text-steel">
+                Dealers rent equipment out and then lose sight of it. Where it is, who is
+                running it, when it is due back — still a spreadsheet, still manual, still
+                discovered too late. This console reads the telemetry those machines already
+                emit and turns it into the four decisions a dealer actually makes.
+              </p>
+            </div>
+
+            <div className="hidden lg:block">
+              <MachineWall assets={assets ?? []} />
+            </div>
+          </div>
 
           <div className="mt-16 grid grid-cols-2 gap-x-10 gap-y-12 pl-10 sm:grid-cols-4">
             <Spec n="A" k="fleet utilisation" v={usage ? `${usage.fleet.utilisation_pct}%` : "—"} />
