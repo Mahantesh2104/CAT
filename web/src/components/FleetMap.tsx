@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import RotatingEarth, { type GlobeMarker } from "@/components/ui/wireframe-dotted-globe"
 import type { AssetRow, Config } from "@/lib/types"
+import MachineSilhouette from "@/components/MachineSilhouette"
 import { cn } from "@/lib/utils"
 
 /**
@@ -30,6 +31,7 @@ export default function FleetMap({
 }: { assets: AssetRow[]; config?: Config }) {
   const [hover, setHover] = useState<AssetRow | null>(null)
   const [view, setView] = useState<"globe" | "plot">("globe")
+  const [focusId, setFocusId] = useState<string | null>(null)
 
   const located = assets.filter(
     (a) => typeof a.latitude === "number" && typeof a.longitude === "number",
@@ -71,6 +73,13 @@ export default function FleetMap({
 
   const branches = Object.entries(config?.branches ?? {})
 
+
+  // Default to the machine that most needs a person: the one carrying the largest single
+  // claim. Hovering a marker on the globe takes over.
+  const focus = located.find((a) => a.equipment_id === focusId)
+    ?? [...located].sort(
+      (a, b) => (b.flags_count - a.flags_count) || (a.utilization_pct - b.utilization_pct),
+    )[0]
 
   // Bounds from everything we plot, so branches never fall outside the frame.
   const lats = [...located.map((a) => a.latitude as number), ...branches.map(([, b]) => b.lat)]
@@ -118,15 +127,81 @@ export default function FleetMap({
       {/* The globe is the arresting view; the flat plot is the one you read positions
           off. Both draw from the same fixes, so neither can disagree with the other. */}
       {view === "globe" ? (
-        <div className="p-4">
+        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <RotatingEarth
             markers={globeMarkers}
             focus={[78, 21]}
             height={520}
+            onMarkerHover={setFocusId}
           />
+
+          {/* The globe is square; the card fills the width beside it rather than leaving
+              dead space, and shows whichever machine the pointer is over. */}
+          {focus && (
+            <aside className="flex min-w-0 flex-col border border-hairline bg-ground">
+              <header className="flex items-start justify-between gap-3 border-b border-hairline px-4 py-3">
+                <div className="min-w-0">
+                  <p className="num text-[17px] font-semibold leading-none text-chalk">
+                    {focus.equipment_id}
+                  </p>
+                  <p className="mt-1.5 truncate text-[12.5px] text-steel">{focus.type}</p>
+                </div>
+                <span className={cn(
+                  "shrink-0 border px-1.5 py-px font-mono text-[9.5px] font-semibold tracking-[0.12em]",
+                  focus.status === "OVERDUE" || focus.status === "UNASSIGNED"
+                    ? "border-critical/50 text-critical"
+                    : focus.status === "IDLE"
+                      ? "border-warning/50 text-warning"
+                      : "border-nominal/40 text-nominal",
+                )}>
+                  {focus.status}
+                </span>
+              </header>
+
+              <div className="flex items-center justify-center border-b border-hairline px-4 py-4">
+                <MachineSilhouette
+                  type={focus.type}
+                  tone={TONE[focus.status] ?? "#f2f4f8"}
+                  className="h-auto w-full max-w-[240px]"
+                />
+              </div>
+
+              <dl className="flex flex-col">
+                {[
+                  ["site", focus.site_id ?? "NO SITE"],
+                  ["operator", focus.operator_id ?? "NO OPERATOR"],
+                  ["branch", focus.branch_id ?? "—"],
+                  ["position", `${focus.latitude?.toFixed(4)}, ${focus.longitude?.toFixed(4)}`],
+                  ["last fix", focus.last_fix ? focus.last_fix.replace("T", " ").slice(0, 16) : "—"],
+                  ["utilisation", `${focus.utilization_pct.toFixed(1)}%`],
+                ].map(([k, v]) => (
+                  <div key={k}
+                       className="flex items-baseline justify-between gap-3 border-b border-hairline/60 px-4 py-2">
+                    <dt className="label">{k}</dt>
+                    <dd className={cn("num text-[12.5px]",
+                      v === "NO SITE" || v === "NO OPERATOR" ? "text-critical" : "text-chalk")}>
+                      {v}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+
+              <Link to={`/asset/${focus.equipment_id}`}
+                    className="mt-auto flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface">
+                <span className="text-[12.5px] text-steel">
+                  {focus.flags_count > 0
+                    ? `${focus.flags_count} rule${focus.flags_count > 1 ? "s" : ""} firing`
+                    : "no rules firing"}
+                </span>
+                <span className="label">open →</span>
+              </Link>
+            </aside>
+          )}
         </div>
       ) : (
-      <div className="relative p-4">
+      // Capped: the viewBox is 720x460, so at full width on a 1700px screen the plot
+      // scaled past a thousand pixels tall and the fleet spread out of view.
+      <div className="relative mx-auto max-w-[860px] p-4">
         {hover && (
           <div className="pointer-events-none absolute z-10 border border-hairline-bright bg-ground px-3 py-2"
                style={{ left: 16, top: 16 }}>
