@@ -27,6 +27,7 @@ WHAT THIS DATASET IS, STATED PLAINLY:
 """
 from __future__ import annotations
 import json
+import hashlib
 import pathlib
 
 import pandas as pd
@@ -71,14 +72,84 @@ OPERATOR_INDUSTRIES = [
 INDIA_COUNTRY = "India"
 
 
+MANIFEST = HERE / "source_manifest.json"
+
+
+def _manifest() -> dict:
+    """The fingerprint of the file every committed number was derived from."""
+    return json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
+
+
 def _find_csv() -> pathlib.Path:
+    """Locate the source CSV, or explain precisely why it is not here.
+
+    The file is 153 MB, past GitHub's 100 MB hard limit, so it is deliberately
+    outside the repository and always will be. That is not a broken checkout, and
+    the message has to say so - "file not found" reads like a bug and sends
+    somebody hunting for a mistake nobody made.
+    """
     for p in CSV_CANDIDATES:
         if p.exists():
             return p
-    raise SystemExit(
-        "hmd_python.csv not found. Looked in:\n  "
-        + "\n  ".join(str(p) for p in CSV_CANDIDATES)
-    )
+
+    m = _manifest()
+    lines = [
+        "",
+        "hmd_python.csv is not in this checkout, and it never is.",
+        "  " + m.get("why_not_in_the_repo", "It exceeds GitHub's file-size limit."),
+        "",
+        "NOTHING NEEDS IT TO RUN. What it produces is already committed:",
+        "  " + ", ".join(m.get("derived_artifacts", ["catalogue_*.json"])) + ", seed_*.json",
+        "  Start the API and the whole system works from those.",
+        "",
+        "You only need it to REGENERATE them. Ask a teammate for the file, then",
+        "put it at one of:",
+    ]
+    lines += ["  " + str(p) for p in CSV_CANDIDATES]
+    if m.get("sha256"):
+        lines += [
+            "",
+            "Check you were handed the right one:",
+            "  sha256   " + m["sha256"],
+            "  size     {:,} bytes".format(m["size_bytes"]),
+            "  contents {:,} rows x {} columns".format(m["rows"], len(m["columns"])),
+        ]
+    raise SystemExit("\n".join(lines) + "\n")
+
+
+def _verify(csv_path: pathlib.Path) -> None:
+    """Confirm the CSV in hand is the one the committed numbers came from.
+
+    A differently-sourced copy of a public BI dataset would regenerate the seeds
+    silently, and quietly invalidate the test suite, the ledger and the pitch. One
+    hash up front is cheaper than learning that from a failing assertion on the
+    morning of the demo.
+    """
+    m = _manifest()
+    expected = m.get("sha256")
+    if not expected:
+        print("  no source_manifest.json - skipping the integrity check")
+        return
+
+    size = csv_path.stat().st_size
+    if size != m.get("size_bytes"):
+        print("  WARNING size is {:,} bytes, manifest says {:,}".format(
+            size, m.get("size_bytes", 0)))
+
+    h = hashlib.sha256()
+    with csv_path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+
+    if h.hexdigest() == expected:
+        print("  sha256 matches the manifest - {:,} rows, {} SKUs, {} branches".format(
+            m["rows"], m["distinct_product_keys"], m["distinct_stores"]))
+    else:
+        print("  WARNING sha256 does NOT match source_manifest.json.")
+        print("    expected " + expected)
+        print("    got      " + h.hexdigest())
+        print("    Regenerating from this file will change the committed seeds and")
+        print("    can break the test suite. Confirm you have the right CSV first.")
 
 
 def _write(name: str, payload) -> None:
@@ -91,6 +162,7 @@ def _write(name: str, payload) -> None:
 def main() -> None:
     csv_path = _find_csv()
     print(f"reading {csv_path} ...")
+    _verify(csv_path)
     df = pd.read_csv(csv_path, encoding=ENCODING)
     df["TransactionDate"] = pd.to_datetime(df["TransactionDate"], format=DATE_FORMAT)
     df["DeliveryDate"] = pd.to_datetime(df["DeliveryDate"], format=DATE_FORMAT)
