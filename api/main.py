@@ -13,23 +13,44 @@ Rules of the house:
 """
 from __future__ import annotations
 import json
+import os
 import pathlib
 import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import config as cfg
 from schemas import (
-    Asset, RentalEvent, Booking, LedgerEntry, TelemetrySnapshot, IntelligenceBundle,
+    Asset, RentalEvent, Booking, LedgerEntry, TelemetrySnapshot, EventType,
+    IntelligenceBundle,
 )
 import intelligence
 
 app = FastAPI(title="Smart Rental Tracking")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# CORS defaults to "*" so localhost and a laptop on venue wifi both work. In production
+# set ALLOWED_ORIGINS to the deployed web URL - with "*" any web page a viewer visits can
+# issue a cross-origin POST /reset and wipe the demo state mid-presentation.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+
+# Optional shared secret for the two state-destroying routes. Unset locally (open, so
+# nothing gets in the way); set it on Render and only the console can reset or reconfigure.
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS,
+                   allow_methods=["*"], allow_headers=["*"])
+
+MAX_TEXT = 500          # notes and free-text fields; keeps an append-only log bounded
+
+
+def require_admin(x_admin_token: Optional[str] = Header(default=None)) -> None:
+    """No-op when ADMIN_TOKEN is unset, so local development is unaffected."""
+    if ADMIN_TOKEN and x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(401, "admin token required")
 
 DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 
@@ -99,8 +120,56 @@ def _safe_bundle() -> IntelligenceBundle:
 def _find(equipment_id: str) -> Asset:
     a = next((x for x in ASSETS if x.equipment_id == equipment_id), None)
     if not a:
-        raise HTTPException(404, f"unknown asset {equipment_id}")
+        raise HTTPException(404, "unknown asset")
     return a
+
+
+def _validate_patch(patch: dict, reference: dict, path: str = "") -> None:
+    """
+    A config patch may only change keys that already exist, to the same type.
+
+    Config drives every rule, every rupee and the pinned clock, so an unchecked patch is
+    not a cosmetic problem. {"day_rates": "x"} makes find_anomalies throw and the
+    try/except silently serves zero flags; {"now": "not-a-date"} takes /assets down with
+    a 500. Both returned HTTP 200 before this existed.
+    """
+    for key, value in patch.items():
+        where = f"{path}{key}"
+        if key not in reference:
+            raise HTTPException(422, f"unknown config key: {where}")
+        expected = reference[key]
+        if isinstance(expected, dict):
+            if not isinstance(value, dict):
+                raise HTTPException(422, f"{where} must be an object")
+            _validate_patch(value, expected, f"{where}.")
+            continue
+        if isinstance(expected, bool) and not isinstance(value, bool):
+            raise HTTPException(422, f"{where} must be a boolean")
+        if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise HTTPException(422, f"{where} must be a number")
+            if value < 0:
+                raise HTTPException(422, f"{where} must not be negative")
+            continue
+        if isinstance(expected, str):
+            if not isinstance(value, str):
+                raise HTTPException(422, f"{where} must be a string")
+            # Type-correct is not the same as valid. "now" is a string that the whole
+            # app parses as a date: a well-typed but unparseable value passed this check
+            # and then took /assets down with a 500.
+            if _parses_as_date(expected):
+                try:
+                    date.fromisoformat(value)
+                except ValueError:
+                    raise HTTPException(422, f"{where} must be an ISO date (YYYY-MM-DD)")
+
+
+def _parses_as_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _deep_merge(target: dict, patch: dict) -> dict:
@@ -177,13 +246,16 @@ def _daily_series(equipment_id: str) -> list[dict]:
 
 
 class EventIn(BaseModel):
-    equipment_id: str
-    event_type: str
-    actor: str
-    site_id: Optional[str] = None
-    operator_id: Optional[str] = None
-    condition_grade: Optional[str] = None
-    notes: Optional[str] = None
+    # event_type is the frozen Literal from schemas, not a free string. As a plain str
+    # an unknown value passed validation here and then blew up constructing RentalEvent,
+    # turning a bad request into a 500.
+    equipment_id: str = Field(max_length=64)
+    event_type: EventType
+    actor: str = Field(max_length=64)
+    site_id: Optional[str] = Field(default=None, max_length=64)
+    operator_id: Optional[str] = Field(default=None, max_length=64)
+    condition_grade: Optional[str] = Field(default=None, max_length=8)
+    notes: Optional[str] = Field(default=None, max_length=MAX_TEXT)
 
 
 @app.post("/events", status_code=201)
@@ -204,33 +276,33 @@ def append_event(body: EventIn):
 # Each takes the body NIRAV_BUILD.md specifies - the caller never sends an event_type,
 # the route supplies it - and each writes exactly one row into events.
 class CheckoutIn(BaseModel):
-    equipment_id: str
-    actor: str
-    site_id: Optional[str] = None
-    notes: Optional[str] = None
+    equipment_id: str = Field(max_length=64)
+    actor: str = Field(max_length=64)
+    site_id: Optional[str] = Field(default=None, max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=MAX_TEXT)
 
 
 class AssignIn(BaseModel):
-    equipment_id: str
-    site_id: str
-    operator_id: Optional[str] = None
-    actor: str
-    notes: Optional[str] = None
+    equipment_id: str = Field(max_length=64)
+    site_id: str = Field(max_length=64)
+    operator_id: Optional[str] = Field(default=None, max_length=64)
+    actor: str = Field(max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=MAX_TEXT)
 
 
 class UsageIn(BaseModel):
-    equipment_id: str
-    engine_hours: float
-    idle_hours: float
-    actor: str
-    notes: Optional[str] = None
+    equipment_id: str = Field(max_length=64)
+    engine_hours: float = Field(ge=0, le=24)
+    idle_hours: float = Field(ge=0, le=24)
+    actor: str = Field(max_length=64)
+    notes: Optional[str] = Field(default=None, max_length=MAX_TEXT)
 
 
 class CheckinIn(BaseModel):
-    equipment_id: str
-    condition_grade: Optional[str] = None
-    notes: Optional[str] = None
-    actor: str
+    equipment_id: str = Field(max_length=64)
+    condition_grade: Optional[str] = Field(default=None, max_length=8)
+    notes: Optional[str] = Field(default=None, max_length=MAX_TEXT)
+    actor: str = Field(max_length=64)
 
 
 @app.post("/checkout", status_code=201)
@@ -364,10 +436,10 @@ def get_ledger():
 
 
 class LedgerIn(BaseModel):
-    equipment_id: str
-    action: str
-    est_value_inr: int
-    rule_id: Optional[str] = None
+    equipment_id: str = Field(max_length=64)
+    action: str = Field(max_length=MAX_TEXT)
+    est_value_inr: int = Field(ge=0)
+    rule_id: Optional[str] = Field(default=None, max_length=16)
 
 
 @app.post("/ledger", status_code=201)
@@ -383,14 +455,15 @@ def get_config():
 
 
 @app.put("/config")
-def put_config(patch: dict):
+def put_config(patch: dict, _: None = Depends(require_admin)):
     """Judge changes a day rate live and the ledger recomputes. Do not skip this."""
+    _validate_patch(patch, cfg.as_dict())
     _deep_merge(CONFIG, patch)
     return CONFIG
 
 
 @app.post("/reset")
-def reset():
+def reset(_: None = Depends(require_admin)):
     """One key restores exact demo state. Bind it to a button before rehearsal."""
     global ASSETS, TELEMETRY, EVENTS, BOOKINGS
     ASSETS = _load_assets()
