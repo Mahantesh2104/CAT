@@ -7,6 +7,7 @@ import StatusPill from "@/components/StatusPill"
 import UtilisationBar from "@/components/UtilisationBar"
 import AvailabilityAsk from "@/components/AvailabilityAsk"
 import ValueLedger from "@/components/ValueLedger"
+import FleetAnalytics from "@/components/FleetAnalytics"
 
 const RANK: Record<string, number> = {
   OVERDUE: 0, UNASSIGNED: 1, IDLE: 2, IN_SERVICE: 3, ACTIVE: 4, AT_YARD: 5,
@@ -92,6 +93,14 @@ export default function FleetBoard() {
           </span>
         </Link>
       ))}
+
+      <FleetAnalytics
+        assets={assets ?? []}
+        usage={usage}
+        ledger={ledger}
+        warnPct={warn}
+        critPct={crit}
+      />
 
       {/* min-w-0: a grid/flex child defaults to min-width:auto and refuses to shrink
           below its content, so the overflow-x-auto wrapper below never engages and the
