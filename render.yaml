@@ -12,3 +12,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # Set both in the Render dashboard before the demo. Without them the deployed
+      # API is world-writable: any web page can POST /reset and wipe demo state.
+      - key: ADMIN_TOKEN          # then send X-Admin-Token on /reset and PUT /config
+        sync: false
+      - key: ALLOWED_ORIGINS      # the Vercel URL, e.g. https://your-app.vercel.app
+        sync: false
