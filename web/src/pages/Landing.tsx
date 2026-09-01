@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import MetroHero from "@/components/ui/scroll-locked-video-hero"
 import MachineExploded from "@/components/MachineExploded"
 import MachineWall from "@/components/MachineWall"
+import CraneMarquee from "@/components/CraneMarquee"
 import { api } from "@/lib/api"
 import { cn, inr } from "@/lib/utils"
 
@@ -143,45 +144,7 @@ export default function Landing() {
       <section className="border-t border-hairline bg-surface">
         <div className="mx-auto max-w-[1200px] px-6 py-24 sm:py-32">
           <p className="label">02 — what it answers</p>
-          <div className="mt-12 grid gap-px bg-hairline sm:grid-cols-2">
-            {[
-              {
-                n: "01",
-                h: "Where is my money leaking?",
-                p: "Eight rules of three different kinds — a threshold, a cross-field contradiction, and a predictive trend. Every flag carries the field names, their values, and the threshold crossed.",
-                tag: "ANOMALY DETECTION",
-              },
-              {
-                n: "02",
-                h: "Can I commit this machine?",
-                p: "A customer wants an excavator Monday. Some come back Friday. The engine ranks the whole fleet by when each machine is genuinely free and names one, with a confidence.",
-                tag: "AVAILABILITY",
-              },
-              {
-                n: "03",
-                h: "What is about to break?",
-                p: "A rolling coolant mean and a least-squares trend, resolving to a real SAE J1939 fault code, the part to replace, and the days of operation left before it fails.",
-                tag: "SPN 110 / FMI 0",
-              },
-              {
-                n: "04",
-                h: "What did acting on it save?",
-                p: "Every action writes an event and a ledger row together. Waste, billable and avoided are kept apart, because adding them produces a number that does not survive a question.",
-                tag: "VALUE LEDGER",
-              },
-            ].map((c) => (
-              <article key={c.n} className="group bg-surface px-8 py-10 transition-colors hover:bg-raised">
-                <div className="flex items-baseline gap-4">
-                  <span className="num text-[13px] text-hazard">{c.n}</span>
-                  <span className="label">{c.tag}</span>
-                </div>
-                <h3 className="mt-4 text-[22px] font-semibold leading-tight tracking-tight text-chalk">
-                  {c.h}
-                </h3>
-                <p className="mt-3 max-w-[46ch] text-[14.5px] leading-relaxed text-steel">{c.p}</p>
-              </article>
-            ))}
-          </div>
+          <CraneMarquee />
         </div>
       </section>
 
