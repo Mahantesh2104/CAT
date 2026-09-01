@@ -1,4 +1,5 @@
 import type { Briefing } from "@/lib/types"
+import BriefingAssistant from "@/components/BriefingAssistant"
 import { cn } from "@/lib/utils"
 
 /**
@@ -67,9 +68,14 @@ export default function FleetBriefing({ briefing }: { briefing?: Briefing }) {
         ))}
       </div>
 
+      {/* Inside the briefing box on purpose: the six lines above answer the questions we
+          decided a dealer asks; this answers whatever they actually wanted to know, from
+          the same figures. */}
+      <BriefingAssistant />
+
       <p className="border-t border-hairline px-5 py-2.5 text-[11.5px] leading-relaxed text-slate">
-        Generated from the rules, not by a language model. Every figure in these sentences
-        appears somewhere else on this screen and can be checked against it.
+        The six lines above are generated from the rules, not by a language model. Every
+        figure in them appears elsewhere on this screen and can be checked against it.
       </p>
     </section>
   )

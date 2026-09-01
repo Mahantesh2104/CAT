@@ -18,3 +18,4 @@ data/raw/
 node_modules/
 dist/
 .vite/
+.env.local

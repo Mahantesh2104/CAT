@@ -22,6 +22,14 @@ export interface AssetRow {
   last_fix: string | null
 }
 
+export interface AskAnswer {
+  answer: string
+  grounded_on: string[]
+  source: "rules" | "model" | "fallback"
+  checked: boolean
+  unverified?: string[]
+}
+
 export interface Briefing {
   as_of: string
   headline: string
