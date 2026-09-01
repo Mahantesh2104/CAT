@@ -32,11 +32,25 @@ export default function Scan() {
     retry: false,
   })
 
-  useEffect(() => {
-    return () => {
-      scannerRef.current?.stop().catch(() => {})
+  /**
+   * html5-qrcode throws SYNCHRONOUSLY ("Cannot stop, scanner is not running or paused")
+   * when stop() is called on a scanner that never started — and a synchronous throw is
+   * not caught by .catch(). Unmounting this page after only viewing it therefore crashed
+   * the entire React tree, blanking every screen navigated to from here. Always stop
+   * through this helper.
+   */
+  function safeStop() {
+    const scanner = scannerRef.current
+    if (!scanner) return
+    try {
+      const result = scanner.stop()
+      if (result && typeof result.catch === "function") result.catch(() => {})
+    } catch {
+      /* never started — nothing to stop */
     }
-  }, [])
+  }
+
+  useEffect(() => safeStop, [])
 
   async function startCamera() {
     setError(null)
@@ -48,7 +62,7 @@ export default function Scan() {
         { fps: 10, qrbox: { width: 230, height: 230 } },
         (decoded) => {
           setCode(decoded.trim())
-          scanner.stop().catch(() => {})
+          safeStop()
           setScanning(false)
         },
         () => {},
