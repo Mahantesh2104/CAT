@@ -107,3 +107,11 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Tailwind provides sr-only; this is the paired focus escape used by the skip link. */
+.focus\:not-sr-only:focus {
+  position: absolute;
+  width: auto; height: auto;
+  padding: inherit; margin: 0;
+  overflow: visible; clip: auto; white-space: normal;
+}

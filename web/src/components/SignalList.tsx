@@ -45,9 +45,9 @@ export default function SignalList({ signals, className }: { signals: Anomaly[];
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-hairline">
-                    <th className="label pb-1 text-left font-normal">field</th>
-                    <th className="label pb-1 text-left font-normal">value</th>
-                    <th className="label pb-1 text-left font-normal">threshold crossed</th>
+                    <th scope="col" className="label pb-1 text-left font-normal">field</th>
+                    <th scope="col" className="label pb-1 text-left font-normal">value</th>
+                    <th scope="col" className="label pb-1 text-left font-normal">threshold crossed</th>
                   </tr>
                 </thead>
                 <tbody>

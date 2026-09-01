@@ -110,7 +110,7 @@ export default function FleetBoard() {
                 <tr className="border-b border-hairline">
                   {["asset", "type", "status", "site", "operator", "utilisation", "idle h/d", "due back", "flags"].map(
                     (h) => (
-                      <th key={h} className="label px-4 py-2.5 font-normal whitespace-nowrap">{h}</th>
+                      <th key={h} scope="col" className="label px-4 py-2.5 font-normal whitespace-nowrap">{h}</th>
                     ),
                   )}
                 </tr>
@@ -206,7 +206,7 @@ export default function FleetBoard() {
               <tr className="border-b border-hairline">
                 {["site", "branch", "assets", "rented days", "engine h", "idle h", "utilisation", "idle cost"].map(
                   (h) => (
-                    <th key={h} className="label px-4 py-2.5 font-normal whitespace-nowrap">{h}</th>
+                    <th key={h} scope="col" className="label px-4 py-2.5 font-normal whitespace-nowrap">{h}</th>
                   ),
                 )}
               </tr>

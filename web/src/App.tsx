@@ -22,6 +22,14 @@ function Chrome({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-ground">
+      {/* Keyboard users otherwise tab through the whole nav on every screen before
+          reaching the board. Visually hidden until focused. */}
+      <a
+        href="#content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-hazard focus:bg-ground focus:px-4 focus:py-2 focus:font-mono focus:text-[12px] focus:text-hazard"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-40 border-b border-hairline bg-ground/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3">
           <NavLink to="/" className="flex items-baseline gap-2.5">
@@ -60,7 +68,7 @@ function Chrome({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1400px] px-5 py-7">
+      <main id="content" tabIndex={-1} className="mx-auto max-w-[1400px] px-5 py-7">
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
 
