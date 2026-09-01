@@ -20,3 +20,13 @@ export function shortDate(d?: string | null): string {
     day: "2-digit", month: "short",
   })
 }
+
+/**
+ * One key per user gesture, sent as Idempotency-Key. The server returns the original row
+ * for a repeat key instead of appending a second one, so a retry or a duplicated request
+ * can never inflate the ledger.
+ */
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
+  return `k-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}

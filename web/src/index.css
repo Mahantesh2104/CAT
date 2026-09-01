@@ -15,7 +15,9 @@
 
   --color-chalk: #f2f4f8;
   --color-steel: #9aa5b6;
-  --color-slate: #616d7e;
+  /* Measured 3.83:1 on the ground at #616d7e - below the 4.5:1 AA floor, and this
+     is the colour of nearly every field label. #8b95a5 measures ~5.9:1. */
+  --color-slate: #8b95a5;
 
   --color-hazard: #ffcd11;
   --color-hazard-dim: #8a6f0b;

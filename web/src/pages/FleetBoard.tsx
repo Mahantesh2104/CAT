@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
+import { useResilientQuery } from "@/lib/useResilientQuery"
 import { api } from "@/lib/api"
 import { cn, inr, shortDate } from "@/lib/utils"
 import StatusPill from "@/components/StatusPill"
@@ -12,7 +13,7 @@ const RANK: Record<string, number> = {
 }
 
 export default function FleetBoard() {
-  const { data: assets, isLoading, error } = useQuery({ queryKey: ["assets"], queryFn: api.assets })
+  const { data: assets, isLoading, error, retry } = useResilientQuery(["assets"], api.assets)
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: api.config, refetchInterval: false })
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger })
   const { data: usage } = useQuery({ queryKey: ["usage"], queryFn: api.usage })
@@ -29,18 +30,37 @@ export default function FleetBoard() {
   const warn = (config?.idle_utilisation_warn ?? 0.35) * 100
   const crit = (config?.idle_utilisation_crit ?? 0.2) * 100
 
+  // The old version printed the raw exception and a uvicorn command straight to the
+  // operator. Plain English first, a way to recover second, the stack trace last.
+  // Branch on `error`, NOT `isError`. A data-less query that is refetching resets its
+  // status to 'pending', so isError oscillates every poll and the screen flickers between
+  // "loading" and "failed" - measured flipping every 3 seconds. React Query keeps the
+  // `error` object populated until a fetch actually succeeds, so it is the stable signal.
   if (error) {
     return (
-      <div className="border border-critical/40 bg-critical/10 px-6 py-8">
-        <p className="font-mono text-[13px] text-critical">Cannot reach the API at {api.base}</p>
-        <p className="mt-2 text-[13px] text-steel">{String(error)}</p>
-        <p className="label mt-4">start it with: uvicorn main:app --port 8000 --app-dir api</p>
+      <div className="border border-critical/40 bg-critical/[0.07] px-6 py-8">
+        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-critical">
+          No connection to the fleet
+        </p>
+        <h2 className="mt-3 text-[20px] font-semibold tracking-tight text-chalk">
+          The console cannot reach the rental service.
+        </h2>
+        <p className="mt-2 max-w-[54ch] text-[14px] leading-relaxed text-steel">
+          Nothing has been lost — the event log and the ledger live on the service, not in
+          this browser. Check the connection and try again.
+        </p>
+        <button
+          onClick={() => retry()}
+          className="mt-5 border border-hazard bg-hazard px-5 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-ground"
+        >
+          Retry
+        </button>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex min-w-0 flex-col gap-7">
       {/* fleet-level readout */}
       <section className="grid gap-px bg-hairline sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -73,9 +93,12 @@ export default function FleetBoard() {
         </Link>
       ))}
 
-      <div className="grid gap-7 xl:grid-cols-[1.6fr_1fr]">
+      {/* min-w-0: a grid/flex child defaults to min-width:auto and refuses to shrink
+          below its content, so the overflow-x-auto wrapper below never engages and the
+          whole page scrolls sideways on a phone instead of just the table. */}
+      <div className="grid min-w-0 gap-7 xl:grid-cols-[1.6fr_1fr]">
         {/* ------------------------- the board -------------------------- */}
-        <section className="border border-hairline bg-surface">
+        <section className="min-w-0 border border-hairline bg-surface">
           <header className="flex items-baseline justify-between gap-4 border-b border-hairline px-5 py-3.5">
             <h2 className="font-mono text-[11px] uppercase tracking-[0.16em] text-steel">Fleet board</h2>
             <span className="label">worst first · polls every 5s</span>
@@ -96,6 +119,14 @@ export default function FleetBoard() {
                 {isLoading && (
                   <tr>
                     <td colSpan={9} className="label px-4 py-10 text-center">reading the fleet…</td>
+                  </tr>
+                )}
+                {!isLoading && rows.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-10 text-center">
+                      <p className="text-[13px] text-chalk">No machines on the board.</p>
+                      <p className="label mt-1.5">nothing is out on rent right now</p>
+                    </td>
                   </tr>
                 )}
                 {rows.map((a) => {
@@ -155,7 +186,7 @@ export default function FleetBoard() {
           </div>
         </section>
 
-        <div className="flex flex-col gap-7">
+        <div className="flex min-w-0 flex-col gap-7">
           <AvailabilityAsk config={config} />
           <ValueLedger ledger={ledger} />
         </div>
@@ -181,6 +212,14 @@ export default function FleetBoard() {
               </tr>
             </thead>
             <tbody>
+              {usage && usage.by_site.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center">
+                    <p className="text-[13px] text-chalk">No site usage yet.</p>
+                    <p className="label mt-1.5">usage appears once machines are deployed</p>
+                  </td>
+                </tr>
+              )}
               {usage?.by_site.map((s) => (
                 <tr
                   key={s.site_id}

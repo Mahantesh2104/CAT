@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useResilientQuery } from "@/lib/useResilientQuery"
 import { api } from "@/lib/api"
 import { cn, inr } from "@/lib/utils"
 
@@ -11,7 +12,9 @@ import { cn, inr } from "@/lib/utils"
  */
 export default function Settings() {
   const qc = useQueryClient()
-  const { data: config } = useQuery({ queryKey: ["config"], queryFn: api.config })
+  const { data: config, isLoading, error: loadError, retry } = useResilientQuery(
+    ["config"], api.config,
+  )
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +33,15 @@ export default function Settings() {
   }
 
   async function reset() {
+    // Destructive and irreversible: it clears every event and ledger row taken so far.
+    // One misplaced click during a demo should not be able to do that silently.
+    const entries = ledger?.entries.length ?? 0
+    if (!window.confirm(
+      `Reset the demo?
+
+This clears ${entries} ledger row(s) and every event recorded ` +
+      `in this session, and restores the original seed state. It cannot be undone.`
+    )) return
     setBusy(true)
     try {
       await api.reset()
@@ -55,6 +67,34 @@ export default function Settings() {
     { key: "coolant_warn_c", label: "coolant warn (°C)", step: 1 },
     { key: "coolant_failure_c", label: "coolant failure (°C)", step: 1 },
   ]
+
+  // Rendering the form while the config query has not resolved showed nine empty number
+  // inputs on a page that otherwise looked fully operational - an operator could type a
+  // threshold derived from nothing at all.
+  // Branch on `error`, NOT `isError`. A data-less query that is refetching resets its
+  // status to 'pending', so isError oscillates every poll and the screen flickers between
+  // "loading" and "failed" - measured flipping every 3 seconds. React Query keeps the
+  // `error` object populated until a fetch actually succeeds, so it is the stable signal.
+  if (loadError)
+    return (
+      <div className="border border-critical/40 bg-critical/[0.07] px-6 py-8">
+        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-critical">
+          Settings unavailable
+        </p>
+        <p className="mt-2 max-w-[52ch] text-[14px] text-steel">
+          The console cannot read the current thresholds, so it will not show you fields to
+          edit. Nothing has been changed.
+        </p>
+        <button
+          onClick={() => retry()}
+          className="mt-5 border border-hazard bg-hazard px-5 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-ground"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  if (isLoading || !config)
+    return <p className="label py-20 text-center">reading the current assumptions…</p>
 
   return (
     <div className="flex flex-col gap-6">

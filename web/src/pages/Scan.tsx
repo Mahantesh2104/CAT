@@ -18,6 +18,7 @@ const READER_ID = "qr-reader"
 export default function Scan() {
   const nav = useNavigate()
   const scannerRef = useRef<Html5Qrcode | null>(null)
+  const inFlight = useRef(false)
   const [scanning, setScanning] = useState(false)
   const [code, setCode] = useState("")
   const [manual, setManual] = useState("")
@@ -74,7 +75,10 @@ export default function Scan() {
   }
 
   async function act(kind: "IN" | "OUT") {
-    if (!code) return
+    // Same asynchronous-setState race as the action queue: a double tap on a phone is
+    // more likely than a double click on a desktop, not less.
+    if (!code || inFlight.current) return
+    inFlight.current = true
     setBusy(kind)
     setError(null)
     try {
@@ -90,6 +94,7 @@ export default function Scan() {
       setError(err instanceof Error ? err.message : "action failed")
     } finally {
       setBusy(null)
+      inFlight.current = false
     }
   }
 

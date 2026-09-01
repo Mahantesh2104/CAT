@@ -1,7 +1,7 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import type { Anomaly, AssetDetail } from "@/lib/types"
 import { api } from "@/lib/api"
-import { cn, inr } from "@/lib/utils"
+import { cn, inr, newIdempotencyKey } from "@/lib/utils"
 
 type Action = "RETURN" | "REASSIGN" | "EXTEND" | "INVESTIGATE"
 
@@ -28,6 +28,14 @@ export default function ActionQueue({
   const [done, setDone] = useState<Action | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  /**
+   * `disabled={busy !== null}` is NOT enough on its own. setState is asynchronous, so four
+   * fast clicks all pass the check before React re-renders the disabled button - measured
+   * as 4 ledger rows and INR 24,60,000 recorded for one INR 1,80,000 action. A ref is read
+   * and written synchronously inside the handler, so the second click loses immediately.
+   */
+  const inFlight = useRef(false)
+
   const id = detail.asset.equipment_id
   const top: Anomaly | undefined = [...detail.signals].sort(
     (a, b) => b.est_value_inr - a.est_value_inr,
@@ -35,6 +43,11 @@ export default function ActionQueue({
   const worth = top?.est_value_inr ?? 0
 
   async function run(action: Action) {
+    if (inFlight.current) return
+    inFlight.current = true
+    // One key per user gesture. If a retry or a duplicate request carries the same key the
+    // server returns the original row instead of writing a second one.
+    const key = newIdempotencyKey()
     setBusy(action)
     setError(null)
     try {
@@ -56,6 +69,7 @@ export default function ActionQueue({
           `${action.toLowerCase()} — ${top?.title ?? "operator action"}`,
           worth,
           top?.rule_id,
+          key,
         )
       }
       setDone(action)
@@ -64,6 +78,7 @@ export default function ActionQueue({
       setError(err instanceof Error ? err.message : "action failed")
     } finally {
       setBusy(null)
+      inFlight.current = false
     }
   }
 

@@ -22,11 +22,11 @@ export default function SignalList({ signals, className }: { signals: Anomaly[];
     )
   }
   return (
-    <div className={cn("flex flex-col gap-px bg-hairline", className)}>
+    <div className={cn("flex min-w-0 flex-col gap-px bg-hairline", className)}>
       {signals.map((a, i) => {
         const tone = TONE[a.severity]
         return (
-          <article key={`${a.rule_id}-${i}`} className={cn("border-l-2 bg-surface", tone.edge, tone.bg)}>
+          <article key={`${a.rule_id}-${i}`} className={cn("min-w-0 border-l-2 bg-surface", tone.edge, tone.bg)}>
             <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 pt-3">
               <span className={cn("font-mono text-[11px] font-semibold tracking-[0.12em]", tone.text)}>
                 {a.rule_id}

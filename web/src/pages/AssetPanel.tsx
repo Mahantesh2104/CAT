@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useResilientQuery } from "@/lib/useResilientQuery"
 import { api } from "@/lib/api"
 import { inr } from "@/lib/utils"
 import StatusPill from "@/components/StatusPill"
@@ -20,23 +21,43 @@ function Field({ k, v }: { k: string; v: React.ReactNode }) {
 export default function AssetPanel() {
   const { id = "" } = useParams()
   const qc = useQueryClient()
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["asset", id],
-    queryFn: () => api.asset(id),
-  })
+  const { data, isLoading, error, retry } = useResilientQuery(["asset", id], () => api.asset(id))
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: api.config, refetchInterval: false })
 
   function refreshEverything() {
     qc.invalidateQueries()
   }
 
-  if (isLoading) return <p className="label py-20 text-center">reading {id}…</p>
-  if (error || !data)
+  // Branch on `error`, NOT `isError`. A data-less query that is refetching resets its
+  // status to 'pending', so isError oscillates every poll and the screen flickers between
+  // "loading" and "failed" - measured flipping every 3 seconds. React Query keeps the
+  // `error` object populated until a fetch actually succeeds, so it is the stable signal.
+  if (error || (!isLoading && !data))
     return (
-      <div className="border border-critical/40 bg-critical/10 px-6 py-8">
-        <p className="font-mono text-[13px] text-critical">Could not load {id}</p>
+      <div className="border border-critical/40 bg-critical/[0.07] px-6 py-8">
+        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-critical">
+          Could not load {id}
+        </p>
+        <p className="mt-2 max-w-[52ch] text-[14px] text-steel">
+          The machine may not exist, or the rental service is unreachable.
+        </p>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button
+            onClick={() => retry()}
+            className="border border-hazard bg-hazard px-5 py-2.5 font-mono text-[12px] font-semibold uppercase tracking-[0.14em] text-ground"
+          >
+            Retry
+          </button>
+          <Link
+            to="/fleet"
+            className="border border-hairline-bright px-5 py-2.5 font-mono text-[12px] uppercase tracking-[0.14em] text-chalk hover:border-hazard hover:text-hazard"
+          >
+            Fleet board
+          </Link>
+        </div>
       </div>
     )
+  if (isLoading || !data) return <p className="label py-20 text-center">reading {id}…</p>
 
   const a = data.asset
   const util =
@@ -46,7 +67,7 @@ export default function AssetPanel() {
   const worst = [...data.signals].sort((x, y) => y.est_value_inr - x.est_value_inr)[0]
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-6">
       <Link to="/fleet" className="label hover:text-chalk">← fleet board</Link>
 
       <header className="border border-hairline bg-surface">
@@ -82,9 +103,9 @@ export default function AssetPanel() {
         </div>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-        <div className="flex flex-col gap-6">
-          <section>
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[1.5fr_1fr]">
+        <div className="flex min-w-0 flex-col gap-6">
+          <section className="min-w-0">
             <h2 className="label mb-2.5">signals that fired — field, value, threshold</h2>
             <SignalList signals={data.signals} />
           </section>

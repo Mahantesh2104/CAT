@@ -7,8 +7,9 @@ import type {
 const BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000").replace(/\/$/, "")
 const ADMIN = import.meta.env.VITE_ADMIN_TOKEN as string | undefined
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+async function req<T>(path: string, init?: RequestInit, idempotencyKey?: string): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey
   // The API gates /reset and PUT /config behind this header when ADMIN_TOKEN is set
   // on the server. Unset locally, so development is unaffected.
   if (ADMIN) headers["X-Admin-Token"] = ADMIN
@@ -47,8 +48,11 @@ export const api = {
   logUsage: (equipment_id: string, engine_hours: number, idle_hours: number, actor: string) =>
     req(`/log-usage`, { method: "POST", body: JSON.stringify({ equipment_id, engine_hours, idle_hours, actor }) }),
 
-  addLedger: (equipment_id: string, action: string, est_value_inr: number, rule_id?: string) =>
-    req(`/ledger`, { method: "POST", body: JSON.stringify({ equipment_id, action, est_value_inr, rule_id }) }),
+  addLedger: (equipment_id: string, action: string, est_value_inr: number,
+              rule_id?: string, idempotencyKey?: string) =>
+    req(`/ledger`,
+        { method: "POST", body: JSON.stringify({ equipment_id, action, est_value_inr, rule_id }) },
+        idempotencyKey),
 
   patchConfig: (patch: Record<string, unknown>) =>
     req<Config>(`/config`, { method: "PUT", body: JSON.stringify(patch) }),

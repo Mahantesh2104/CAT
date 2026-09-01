@@ -86,6 +86,11 @@ TELEMETRY: list[TelemetrySnapshot] = _load_telemetry()
 EVENTS: list[RentalEvent] = _load_events()      # APPEND ONLY. This is the audit trail.
 LEDGER: list[LedgerEntry] = []
 USAGE_LOGS: list[dict] = []              # the usage_logs table, in memory for now
+# Idempotency-Key -> the row that key already created. The ledger is append-only, so a
+# duplicated request is permanent and there is no undo short of /reset: four fast clicks
+# on one action were measured writing four rows worth INR 24,60,000 for one INR 1,80,000
+# action. Replaying the stored row makes a repeat a no-op instead.
+IDEMPOTENT: dict[str, LedgerEntry] = {}
 BOOKINGS: list[Booking] = _load_bookings()
 CONFIG: dict = cfg.as_dict()
 
@@ -449,9 +454,18 @@ class LedgerIn(BaseModel):
 
 
 @app.post("/ledger", status_code=201)
-def add_ledger(body: LedgerIn):
+def add_ledger(body: LedgerIn, idempotency_key: Optional[str] = Header(default=None)):
+    """
+    Send an Idempotency-Key and a repeat of the same gesture returns the original row
+    rather than appending another. Without a key the old behaviour is unchanged, so
+    existing callers and curl still work.
+    """
+    if idempotency_key and idempotency_key in IDEMPOTENT:
+        return IDEMPOTENT[idempotency_key]
     entry = LedgerEntry(entry_id=str(uuid.uuid4()), timestamp=datetime.now(), **body.model_dump())
     LEDGER.append(entry)
+    if idempotency_key:
+        IDEMPOTENT[idempotency_key] = entry
     return entry
 
 
@@ -478,6 +492,7 @@ def reset(_: None = Depends(require_admin)):
     BOOKINGS = _load_bookings()
     LEDGER.clear()
     USAGE_LOGS.clear()
+    IDEMPOTENT.clear()
     CONFIG.clear()
     CONFIG.update(cfg.as_dict())
     return {"ok": True, "assets": len(ASSETS), "events": len(EVENTS)}

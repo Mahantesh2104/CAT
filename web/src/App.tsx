@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import ValueLedger from "@/components/ValueLedger"
+import ErrorBoundary from "@/components/ErrorBoundary"
 import Landing from "@/pages/Landing"
 import FleetBoard from "@/pages/FleetBoard"
 import AssetPanel from "@/pages/AssetPanel"
@@ -59,7 +60,9 @@ function Chrome({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1400px] px-5 py-7">{children}</main>
+      <main className="mx-auto max-w-[1400px] px-5 py-7">
+        <ErrorBoundary>{children}</ErrorBoundary>
+      </main>
 
       <footer className="border-t border-hairline px-5 py-5">
         <div className="mx-auto flex max-w-[1400px] flex-wrap justify-between gap-3">
@@ -75,7 +78,11 @@ function Chrome({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { pathname } = useLocation()
-  if (pathname === "/") return <Landing />
+  if (pathname === "/") return (
+    <ErrorBoundary label="Landing">
+      <Landing />
+    </ErrorBoundary>
+  )
 
   return (
     <Chrome>

@@ -481,6 +481,22 @@ export default function MetroHero({
         </div>
       )}
 
+      {/* An explicit way out. The lock releases on overshoot and on Esc, but a first-time
+          visitor whose scroll "does nothing" has no way to know that. */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))}
+        style={{
+          position: "absolute", top: "clamp(14px,3vw,26px)", right: "clamp(14px,3vw,26px)",
+          zIndex: 3, background: "transparent", border: "1px solid rgba(154,165,182,0.4)",
+          color: "rgba(240,244,248,0.8)", fontFamily: MONO, fontSize: 11,
+          letterSpacing: "0.14em", textTransform: "uppercase", padding: "7px 14px",
+          cursor: "pointer",
+        }}
+      >
+        Skip intro
+      </button>
+
       <div
         ref={hintRef}
         style={{
