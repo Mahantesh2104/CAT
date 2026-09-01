@@ -4,6 +4,7 @@ import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import ValueLedger from "@/components/ValueLedger"
 import ErrorBoundary from "@/components/ErrorBoundary"
+import AlertBell from "@/components/AlertBell"
 import Landing from "@/pages/Landing"
 import FleetBoard from "@/pages/FleetBoard"
 import AssetPanel from "@/pages/AssetPanel"
@@ -19,6 +20,7 @@ const NAV = [
 function Chrome({ children }: { children: React.ReactNode }) {
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger })
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: api.health })
+  const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts })
 
   return (
     <div className="min-h-screen bg-ground">
@@ -63,6 +65,7 @@ function Chrome({ children }: { children: React.ReactNode }) {
             <span className="label hidden sm:inline">
               clock <span className="text-steel">{health?.now ?? "—"}</span>
             </span>
+            <AlertBell alerts={alerts} />
             <ValueLedger ledger={ledger} compact />
           </div>
         </div>

@@ -1,7 +1,7 @@
 // The one fetch wrapper. Base URL from env, so localhost -> production is one variable.
 import type {
   AssetRow, AssetDetail, Anomaly, Alert, MaintenanceRisk, AvailabilityAnswer,
-  Ledger, Config, UsageSummary,
+  Ledger, Config, UsageSummary, Briefing,
 } from "./types"
 
 const BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000").replace(/\/$/, "")
@@ -31,6 +31,7 @@ export const api = {
   alerts: () => req<Alert[]>("/alerts"),
   maintenance: () => req<MaintenanceRisk[]>("/maintenance-risk"),
   usage: () => req<UsageSummary>("/usage-summary"),
+  briefing: () => req<Briefing>("/briefing"),
   ledger: () => req<Ledger>("/ledger"),
   config: () => req<Config>("/config"),
 

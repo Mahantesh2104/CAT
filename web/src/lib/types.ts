@@ -17,6 +17,22 @@ export interface AssetRow {
   due_back: string | null
   day_rate: number
   flags_count: number
+  latitude: number | null
+  longitude: number | null
+  last_fix: string | null
+}
+
+export interface Briefing {
+  as_of: string
+  headline: string
+  lines: string[]
+  counts: {
+    assets: number
+    critical: number
+    overdue: number
+    due_soon: number
+    maintenance: number
+  }
 }
 
 export interface Signal {

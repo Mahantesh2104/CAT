@@ -8,6 +8,8 @@ import UtilisationBar from "@/components/UtilisationBar"
 import AvailabilityAsk from "@/components/AvailabilityAsk"
 import ValueLedger from "@/components/ValueLedger"
 import FleetAnalytics from "@/components/FleetAnalytics"
+import FleetBriefing from "@/components/FleetBriefing"
+import FleetMap from "@/components/FleetMap"
 
 const RANK: Record<string, number> = {
   OVERDUE: 0, UNASSIGNED: 1, IDLE: 2, IN_SERVICE: 3, ACTIVE: 4, AT_YARD: 5,
@@ -19,6 +21,7 @@ export default function FleetBoard() {
   const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger })
   const { data: usage } = useQuery({ queryKey: ["usage"], queryFn: api.usage })
   const { data: maintenance } = useQuery({ queryKey: ["maintenance"], queryFn: api.maintenance })
+  const { data: brief } = useQuery({ queryKey: ["briefing"], queryFn: api.briefing })
 
   // Red rows first. A board that sorts alphabetically makes the operator do the triage.
   const rows = [...(assets ?? [])].sort(
@@ -62,6 +65,8 @@ export default function FleetBoard() {
 
   return (
     <div className="flex min-w-0 flex-col gap-7">
+      <FleetBriefing briefing={brief} />
+
       {/* fleet-level readout */}
       <section className="grid gap-px bg-hairline sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -101,6 +106,8 @@ export default function FleetBoard() {
         warnPct={warn}
         critPct={crit}
       />
+
+      <FleetMap assets={assets ?? []} config={config} />
 
       {/* min-w-0: a grid/flex child defaults to min-width:auto and refuses to shrink
           below its content, so the overflow-x-auto wrapper below never engages and the

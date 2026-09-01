@@ -60,6 +60,22 @@ def idle_waste_inr(a: Asset, config: dict) -> int:
     return int(a.idle_hours_day * a.operating_days * hourly_rate(a, config))
 
 
+def inr_words(n: int) -> str:
+    """Indian digit grouping for prose: 6,20,000 rather than 620,000."""
+    s, out = str(int(n)), ""
+    if len(s) > 3:
+        head, tail = s[:-3], s[-3:]
+        parts = []
+        while len(head) > 2:
+            parts.insert(0, head[-2:]); head = head[:-2]
+        if head:
+            parts.insert(0, head)
+        out = ",".join(parts) + "," + tail
+    else:
+        out = s
+    return "INR " + out
+
+
 def rental_line_inr(a: Asset, config: dict) -> int:
     """The whole rental line: what the customer is billed for the days it was out."""
     return int(day_rate(a, config) * a.operating_days)
