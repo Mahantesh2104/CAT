@@ -26,7 +26,7 @@ def client() -> TestClient:
 @pytest.mark.parametrize("path", [
     "/health", "/assets", "/anomalies", "/alerts", "/maintenance-risk",
     "/ledger", "/config", "/bookings", "/usage-logs",
-    "/assets/EQX1005", "/assets/EQX1007",
+    "/assets/EQX1005", "/assets/EQX1007", "/usage-summary",
     "/availability?type=Excavator&site=S003&from=2025-05-19&days=10",
 ])
 def test_every_read_route_answers(client, path):
@@ -76,7 +76,7 @@ def test_config_survives_a_rejected_patch(client):
     client.put("/config", json={"day_rates": "pwned"})
     client.put("/config", json={"now": "not-a-date"})
     assert client.get("/assets").status_code == 200
-    assert len(client.get("/anomalies").json()) == 14
+    assert len(client.get("/anomalies").json()) == 15
     assert client.get("/config").json()["day_rates"]["Excavator"] == 15000
 
 
@@ -129,5 +129,5 @@ def test_reset_restores_exact_demo_state(client):
                                  "operator_id": "OP101", "actor": "t"})
     client.put("/config", json={"day_rates": {"Excavator": 99000}})
     client.post("/reset")
-    assert len(client.get("/anomalies").json()) == 14
+    assert len(client.get("/anomalies").json()) == 15
     assert client.get("/config").json()["day_rates"]["Excavator"] == 15000

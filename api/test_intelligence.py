@@ -65,6 +65,10 @@ EXPECTED = [
     ("R6", "EQX1007", "CRITICAL", 615_000),
     ("R7", "EQX1002", "WARNING",  220_000),
     ("R7", "EQX1007", "WARNING",   90_000),
+    # "Remind users when return time is approaching" - the brief asks for the days
+    # BEFORE the due date, not only after it. INFO and worth zero: nothing is lost yet,
+    # which is the whole point of a reminder.
+    ("R8", "EQX1004", "INFO",           0),
 ]
 
 
@@ -98,6 +102,35 @@ def test_r2_does_not_double_charge_the_ghost_assets(assets, conf):
 
 
 # ---- the given rows are untouched -------------------------------------------
+def test_due_soon_reminder_fires_before_the_due_date(assets, conf):
+    """EQX1004 is due 2025-05-15 with the clock at 2025-05-12 - three days of warning."""
+    r8 = [a for a in intelligence.find_anomalies(assets, conf) if a.rule_id == "R8"]
+    assert [a.equipment_id for a in r8] == ["EQX1004"]
+    assert r8[0].severity == "INFO"
+    assert r8[0].est_value_inr == 0
+    assert any(s.field == "days_until_return" and s.value == "3" for s in r8[0].signals)
+
+
+def test_reminders_do_not_inflate_the_money(assets, conf):
+    summary = intelligence.value_summary(intelligence.find_anomalies(assets, conf), conf)
+    assert summary["total_exposure_inr"] == (
+        summary["waste_inr"] + summary["recoverable_inr"] + summary["avoided_inr"])
+
+
+def test_usage_summary_ranks_the_worst_site_first(assets, conf):
+    """Total rented hours, usage per site, downtime - the brief asks for all three."""
+    summary = intelligence.usage_summary(assets, conf)
+    sites = summary["by_site"]
+    assert sites[0]["site_id"] == "UNASSIGNED"          # the ghost assets, 0% utilisation
+    assert sites[0]["utilisation_pct"] == 0.0
+    assert sites == sorted(sites, key=lambda r: r["utilisation_pct"])
+    for row in sites:
+        assert row["downtime_hours"] == row["idle_hours"]
+    fleet = summary["fleet"]
+    assert fleet["assets"] == len(assets)
+    assert fleet["rented_days"] == sum(a.operating_days for a in assets)
+
+
 def test_seven_given_rows_pass_through_unchanged():
     given = _read("seed_assets_given.json")
     generated = _read("seed_assets.json")[:len(given)]

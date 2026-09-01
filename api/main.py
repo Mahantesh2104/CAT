@@ -412,6 +412,12 @@ def get_bookings():
     return BOOKINGS
 
 
+@app.get("/usage-summary")
+def usage_summary():
+    """Total rented hours, usage per site, downtime - lowest-utilisation site first."""
+    return intelligence.usage_summary(ASSETS, CONFIG)
+
+
 @app.get("/maintenance-risk")
 def maintenance_risk():
     return _safe_bundle().maintenance

@@ -105,6 +105,7 @@ MAX_ALTERNATIVES = 3             # runner-up machines listed beside a commitment
 
 # ---- rule tuning ------------------------------------------------------------
 IDLE_BURN_MIN_DAYS = 7           # R2 needs a rental long enough to mean something
+DUE_SOON_DAYS = 3                # R8: "remind users when return time is approaching"
 NO_OPERATOR_WASTE_SHARE = 0.5    # R7: half the rental line is the defensible claim
 
 # ---- maintenance ------------------------------------------------------------
@@ -161,6 +162,7 @@ def as_dict() -> dict:
         "confidence_transfer_penalty": CONFIDENCE_TRANSFER_PENALTY,
         "max_alternatives": MAX_ALTERNATIVES,
         "idle_burn_min_days": IDLE_BURN_MIN_DAYS,
+        "due_soon_days": DUE_SOON_DAYS,
         "no_operator_waste_share": NO_OPERATOR_WASTE_SHARE,
         "coolant_warn_c": COOLANT_WARN_C,
         "coolant_slope_min": COOLANT_SLOPE_MIN,

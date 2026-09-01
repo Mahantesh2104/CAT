@@ -222,6 +222,30 @@ def find_anomalies(assets: list[Asset], config: dict) -> list[Anomaly]:
                 recommended_action="Contact customer — recall or bill the extension",
             ))
 
+        # ---- R8 DUE_SOON ----------------------------------------------------
+        # The brief asks for a reminder when the return time is APPROACHING, not only
+        # when it has already passed. R6 covers late; this covers the days before, which
+        # is the window in which the dealer can still act - chase the customer, or
+        # commit the machine to the next booking.
+        days_left = ((a.check_in_date - now).days
+                     if a.on_rent and a.check_in_date else None)
+        if days_left is not None and 0 < days_left <= config["due_soon_days"]:
+            out.append(Anomaly(
+                equipment_id=a.equipment_id,
+                rule_id="R8",
+                severity="INFO",
+                title="Due back within the reminder window",
+                signals=[
+                    Signal(field="check_in_date", value=str(a.check_in_date)),
+                    Signal(field="days_until_return", value=str(days_left),
+                           threshold=f"<= {config['due_soon_days']}"),
+                    Signal(field="site_id", value=str(a.site_id)),
+                ],
+                est_value_inr=0,   # nothing lost yet - that is the point of the reminder
+                recommended_action=(f"Confirm return with the customer, or commit it to "
+                                    f"the next booking from {a.check_in_date}"),
+            ))
+
         # ---- R7 NO_OPERATOR -------------------------------------------------
         if a.operator_id is None and a.on_rent:
             out.append(Anomaly(
@@ -258,12 +282,15 @@ VALUE_CATEGORY = {
     "R1": "waste", "R2": "waste", "R3": "waste", "R7": "waste",
     "R4": "recoverable", "R6": "recoverable",
     "R5": "avoided",
+    "R8": "reminder",          # a due-back notice; nothing is lost yet, so it is worth 0
 }
 
 
 def value_summary(anomalies: list[Anomaly], config: dict) -> dict:
     """Pure. What the ledger header should show, split by what the money actually is."""
-    buckets: dict[str, dict[str, int]] = {"waste": {}, "recoverable": {}, "avoided": {}}
+    buckets: dict[str, dict[str, int]] = {
+        "waste": {}, "recoverable": {}, "avoided": {}, "reminder": {},
+    }
     for an in anomalies:
         bucket = buckets[VALUE_CATEGORY.get(an.rule_id, "waste")]
         bucket[an.equipment_id] = max(bucket.get(an.equipment_id, 0), an.est_value_inr)
@@ -273,13 +300,67 @@ def value_summary(anomalies: list[Anomaly], config: dict) -> dict:
         "waste_inr": totals["waste"],
         "recoverable_inr": totals["recoverable"],
         "avoided_inr": totals["avoided"],
-        "total_exposure_inr": sum(totals.values()),
+        "total_exposure_inr": totals["waste"] + totals["recoverable"] + totals["avoided"],
         "by_asset": {
             name: dict(sorted(rows.items())) for name, rows in buckets.items()
         },
         "note": ("waste is money already spent; recoverable is money still billable; "
                  "avoided is downtime not yet incurred. They are not added together in "
                  "the pitch because they are three different claims."),
+    }
+
+
+def usage_summary(assets: list[Asset], config: dict) -> dict:
+    """
+    Pure. The brief asks for "summary of total rented hours, usage per site, downtime".
+
+    Definitions, stated so nobody has to guess what a column means:
+      rented_days   sum of operating_days for machines at that site
+      engine_hours  productive hours          = engine_hours_day * operating_days
+      idle_hours    engine on, no work done   = idle_hours_day   * operating_days
+      downtime      idle hours - the machine was rented and produced nothing in them
+      utilisation   engine / (engine + idle), 0 when the machine never ran
+    """
+    sites: dict[str, dict] = {}
+    for a in assets:
+        key = a.site_id or "UNASSIGNED"
+        row = sites.setdefault(key, {
+            "site_id": key,
+            "branch_id": config.get("site_branch", {}).get(key),
+            "assets": 0, "rented_days": 0,
+            "engine_hours": 0.0, "idle_hours": 0.0, "downtime_hours": 0.0,
+            "idle_cost_inr": 0,
+        })
+        engine = a.engine_hours_day * a.operating_days
+        idle = a.idle_hours_day * a.operating_days
+        row["assets"] += 1
+        row["rented_days"] += a.operating_days
+        row["engine_hours"] += engine
+        row["idle_hours"] += idle
+        row["downtime_hours"] += idle
+        row["idle_cost_inr"] += idle_waste_inr(a, config)
+
+    for row in sites.values():
+        total = row["engine_hours"] + row["idle_hours"]
+        row["utilisation_pct"] = round(100 * row["engine_hours"] / total, 1) if total else 0.0
+        for k in ("engine_hours", "idle_hours", "downtime_hours"):
+            row[k] = round(row[k], 1)
+
+    ordered = sorted(sites.values(), key=lambda r: r["utilisation_pct"])
+    engine_total = round(sum(r["engine_hours"] for r in ordered), 1)
+    idle_total = round(sum(r["idle_hours"] for r in ordered), 1)
+    grand = engine_total + idle_total
+    return {
+        "by_site": ordered,
+        "fleet": {
+            "assets": sum(r["assets"] for r in ordered),
+            "rented_days": sum(r["rented_days"] for r in ordered),
+            "engine_hours": engine_total,
+            "idle_hours": idle_total,
+            "downtime_hours": idle_total,
+            "utilisation_pct": round(100 * engine_total / grand, 1) if grand else 0.0,
+            "idle_cost_inr": sum(r["idle_cost_inr"] for r in ordered),
+        },
     }
 
 
