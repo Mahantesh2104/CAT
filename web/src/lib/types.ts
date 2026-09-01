@@ -192,3 +192,25 @@ export interface Config {
   coolant_failure_c: number
   [key: string]: unknown
 }
+
+export interface Forecast {
+  site_id: string
+  site_label: string
+  equipment_type: string
+  needed_from: string
+  /** "return" is projected from a machine leaving; "booking" is a request already made. */
+  basis: "return" | "booking"
+  headline: string
+  confidence: number
+  signals: { field: string; value: string | number; threshold: string | number | null }[]
+  leaving: string[]
+  history: { date: string; engine_hours: number }[]
+  recommendation: {
+    can_commit: boolean
+    equipment_id: string | null
+    free_from: string | null
+    confidence: number
+    reason: string
+    alternatives: string[]
+  } | null
+}

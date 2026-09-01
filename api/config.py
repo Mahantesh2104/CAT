@@ -108,6 +108,16 @@ IDLE_BURN_MIN_DAYS = 7           # R2 needs a rental long enough to mean somethi
 DUE_SOON_DAYS = 3                # R8: "remind users when return time is approaching"
 NO_OPERATOR_WASTE_SHARE = 0.5    # R7: half the rental line is the defensible claim
 
+# ---- demand forecast --------------------------------------------------------
+# A site's need is projected, never invented. These four numbers are the whole
+# model: how far ahead to look, how far back to measure, the working rate below
+# which a site is not really using a machine type, and the rate at which the
+# need is called with full confidence.
+FORECAST_HORIZON_DAYS = 7        # how far ahead a site's need is projected
+FORECAST_WINDOW_DAYS = 14        # trailing window the working rate is measured over
+FORECAST_MIN_INTENSITY_H = 1.0   # engine h/day below which the site is not working that type
+FORECAST_HIGH_CONF_H = 4.0       # engine h/day at which the need is called confidently
+
 # ---- maintenance ------------------------------------------------------------
 COOLANT_WARN_C = 105.0           # rolling 24h mean above this
 COOLANT_SLOPE_MIN = 0.3          # degrees/day trend, must also be rising
@@ -163,6 +173,10 @@ def as_dict() -> dict:
         "max_alternatives": MAX_ALTERNATIVES,
         "idle_burn_min_days": IDLE_BURN_MIN_DAYS,
         "due_soon_days": DUE_SOON_DAYS,
+        "forecast_horizon_days": FORECAST_HORIZON_DAYS,
+        "forecast_window_days": FORECAST_WINDOW_DAYS,
+        "forecast_min_intensity_h": FORECAST_MIN_INTENSITY_H,
+        "forecast_high_conf_h": FORECAST_HIGH_CONF_H,
         "no_operator_waste_share": NO_OPERATOR_WASTE_SHARE,
         "coolant_warn_c": COOLANT_WARN_C,
         "coolant_slope_min": COOLANT_SLOPE_MIN,

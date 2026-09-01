@@ -1098,6 +1098,48 @@ def assistant_suggestions():
             "model_available": bool(os.getenv("GROQ_API_KEY"))}
 
 
+@app.get("/forecast")
+
+def forecast():
+
+    """Which site is likely to need which machine, and when.
+
+
+
+    Deliberately a projection rather than a regression. The dataset behind this
+
+    build has no demand signal to fit - eleven years of monthly volume flat to
+
+    within three percent - so a model would return a horizontal line dressed up as
+
+    a prediction. What is knowable is mechanical: a site working a machine type at
+
+    a measured rate, and a machine of that type booked to leave inside the horizon.
+
+
+
+    Every row ships the rate that was measured, the machines leaving, the date they
+
+    go, what cover remains, and the machine that covers it - so the prediction can
+
+    be argued with instead of believed.
+
+    """
+
+    try:
+
+        return intelligence.forecast_demand(ASSETS, TELEMETRY, BOOKINGS, CONFIG)
+
+    except Exception as exc:                       # noqa: BLE001
+
+        print(f"[forecast] degraded: {exc}")
+
+        return []
+
+
+
+
+
 @app.get("/maintenance-risk")
 
 def maintenance_risk():

@@ -9,6 +9,7 @@ import UtilisationBar from "@/components/UtilisationBar"
 import AvailabilityAsk from "@/components/AvailabilityAsk"
 import ValueLedger from "@/components/ValueLedger"
 import FleetAnalytics from "@/components/FleetAnalytics"
+import DemandForecast from "@/components/DemandForecast"
 import FleetBriefing from "@/components/FleetBriefing"
 import FleetMap from "@/components/FleetMap"
 import MetricReport, { type MetricKey } from "@/components/MetricReport"
@@ -25,6 +26,7 @@ export default function FleetBoard() {
   const { data: maintenance } = useQuery({ queryKey: ["maintenance"], queryFn: api.maintenance })
   const { data: brief } = useQuery({ queryKey: ["briefing"], queryFn: api.briefing })
   const { data: anomalies } = useQuery({ queryKey: ["anomalies"], queryFn: api.anomalies })
+  const { data: forecast } = useQuery({ queryKey: ["forecast"], queryFn: api.forecast })
   const [report, setReport] = useState<MetricKey | null>(null)
 
   // Red rows first. A board that sorts alphabetically makes the operator do the triage.
@@ -79,6 +81,8 @@ export default function FleetBoard() {
       />
 
       <FleetBriefing briefing={brief} onDrill={setReport} />
+
+      <DemandForecast forecast={forecast} />
 
       {/* fleet-level readout */}
       <section className="grid gap-px bg-hairline sm:grid-cols-2 lg:grid-cols-4">
