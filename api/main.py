@@ -610,6 +610,14 @@ def append_event(body: EventIn):
 
         a.condition_grade = body.condition_grade
 
+    # Persist after the in-memory state is already correct, and never let the
+
+    # database decide whether the operator's action succeeded.
+
+    store.write_event(ev.model_dump(mode="json"))
+
+    store.write_asset(a.model_dump(mode="json"))
+
     return {"event": ev, "status": project_status(a)}
 
 
@@ -1313,6 +1321,8 @@ def auth_session(body: SessionRequest):
 
 
 
+    store.write_user(body.name.strip(), role["id"], site)
+
     return {
 
         "actor": body.name.strip(),
@@ -1374,6 +1384,8 @@ def raise_hire_request(body: HireRequest):
     }
 
     HIRE_REQUESTS.append(row)
+
+    store.write_hire_request(row)
 
     return row
 

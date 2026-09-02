@@ -148,3 +148,92 @@ def verify() -> dict[str, Any]:
         }
     result["all_identical"] = all(t["identical"] for t in result["tables"].values())
     return result
+
+
+# ============================================================== writing back
+# Reads happen once, at startup. Writes happen while somebody is standing in front of
+# the screen, so they are held to a different rule: a write that cannot reach the
+# database must never fail the request the operator made. The event is already in
+# memory and the board is already correct; Postgres catching up is a bonus, not a
+# precondition. Every failure here is logged and swallowed on purpose.
+
+_write_conn = None
+
+
+def _writer():
+    """One lazy connection, reopened if the last write found it dead."""
+    global _write_conn
+    if _backend != "supabase":
+        return None
+    if _write_conn is not None and getattr(_write_conn, "closed", 1) == 0:
+        return _write_conn
+    try:
+        import psycopg2
+        _write_conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+        _write_conn.autocommit = True
+        return _write_conn
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[store] write connection failed ({exc.__class__.__name__}) — "
+              "the action still succeeded in memory")
+        _write_conn = None
+        return None
+
+
+def _run(sql: str, params: tuple) -> bool:
+    conn = _writer()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        return True
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[store] write failed ({exc}) — the action still succeeded in memory")
+        global _write_conn
+        _write_conn = None
+        return False
+
+
+def write_event(e: dict) -> bool:
+    """Append one rental event. The audit trail is the thing worth persisting first."""
+    from psycopg2.extras import Json
+    return _run(
+        "insert into events (event_id, occurred_at, equipment_id, event_type, actor, "
+        "site_id, operator_id, condition_grade, notes, payload) "
+        "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (event_id) do nothing",
+        (e["event_id"], e["timestamp"], e["equipment_id"], e["event_type"],
+         e.get("actor", "unattributed"), e.get("site_id"), e.get("operator_id"),
+         e.get("condition_grade"), e.get("notes"), Json(e)),
+    )
+
+
+def write_hire_request(r: dict) -> bool:
+    from psycopg2.extras import Json
+    return _run(
+        "insert into hire_requests (request_id, raised_at, status, equipment_id, kind, "
+        "actor, site_id, days, note, payload) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        "on conflict (request_id) do update set status=excluded.status",
+        (r["request_id"], r["raised_at"], r["status"], r["equipment_id"], r["kind"],
+         r["actor"], r.get("site_id"), r.get("days"), r.get("note"), Json(r)),
+    )
+
+
+def write_asset(a: dict) -> bool:
+    """A machine's mutable facts after an event moved it. The row, not a new row."""
+    from psycopg2.extras import Json
+    return _run(
+        "update assets set site_id=%s, operator_id=%s, on_rent=%s, condition_grade=%s, "
+        "payload=%s where equipment_id=%s",
+        (a.get("site_id"), a.get("operator_id"), a.get("on_rent"),
+         a.get("condition_grade"), Json(a), a["equipment_id"]),
+    )
+
+
+def write_user(name: str, role: str, site_id: str | None) -> bool:
+    """Who signed in, and as what. Seen once is worth recording; a password is not."""
+    return _run(
+        "insert into app_users (name, role, site_id, last_seen_at) "
+        "values (%s,%s,%s, now()) on conflict (name, role) do update set "
+        "site_id=coalesce(excluded.site_id, app_users.site_id), last_seen_at=now()",
+        (name, role, site_id),
+    )
