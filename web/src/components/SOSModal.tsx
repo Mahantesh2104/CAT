@@ -68,6 +68,8 @@ export default function SOSModal({
       document.body.style.overflow = "unset"
     }
     return () => {
+      // Always. If this component ever unmounts while open - a route change, an error
+      // boundary catching something above it - the page must not be left unscrollable.
       document.body.style.overflow = "unset"
     }
   }, [open])
@@ -75,6 +77,16 @@ export default function SOSModal({
   // Whether the alert reached the server, and why not if it did not.
   const [queuedOnly, setQueuedOnly] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+
+  // Escape closes it. This modal locks body scroll while open, so with no Escape and
+  // no backdrop dismiss the only way out was one small x - miss it and the page is,
+  // from the user's side, frozen. That is exactly how this was reported.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [open])
 
   async function handleTriggerSOS() {
     setLoading(true)
@@ -169,8 +181,18 @@ export default function SOSModal({
 
       {/* Perfectly Centered & Fully Visible Scrollable Modal */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md overflow-y-auto">
-          <div className="relative my-auto w-full max-w-[560px] max-h-[85vh] overflow-y-auto border-2 border-critical bg-ground p-5 sm:p-6 shadow-2xl flex flex-col gap-4 rise-in custom-scrollbar">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md overflow-y-auto"
+          onClick={() => setOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            // Clicks inside the card must not reach the backdrop, or choosing a
+            // category would dismiss the whole thing.
+            onClick={(e) => e.stopPropagation()}
+            className="relative my-auto w-full max-w-[560px] max-h-[85vh] overflow-y-auto border-2 border-critical bg-ground p-5 sm:p-6 shadow-2xl flex flex-col gap-4 rise-in custom-scrollbar"
+          >
             {/* Modal Header */}
             <header className="sticky top-0 z-10 flex items-center justify-between border-b border-critical/40 bg-ground pb-3 pt-1">
               <div className="flex items-center gap-2">
