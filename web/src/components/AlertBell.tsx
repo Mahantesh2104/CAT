@@ -1,3 +1,6 @@
+import { useQuery } from "@tanstack/react-query"
+import { api } from "@/lib/api"
+import type { SOSAlert } from "@/lib/types"
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import type { Alert, HireRequestRow } from "@/lib/types"
@@ -22,6 +25,15 @@ export default function AlertBell({
   alerts?: Alert[]
   requests?: HireRequestRow[]
 }) {
+  // Polled, not pushed: an emergency raised on another device has to reach this
+  // header without a page reload. Two seconds matches the banner, so the bell and
+  // the banner can never disagree about whether an emergency is live.
+  const { data: sosAlerts } = useQuery({
+    queryKey: ["sos-alerts"],
+    queryFn: (): Promise<SOSAlert[]> => api.listSOS().catch(() => []),
+    refetchInterval: 2000,
+  })
+
   const session = useSession()
   const [open, setOpen] = useState(false)
   const [readIds, setReadIds] = useState<Set<string>>(() => {
@@ -121,7 +133,37 @@ export default function AlertBell({
     })
   }
 
+  // 3. SOS emergencies — the only item here where a delay costs more than money.
+  // The banner already sits on the page, but a banner is passive: it waits to be
+  // scrolled to. This puts an active emergency in the bell, so it raises the count and
+  // fires a toast for the two roles who can actually dispatch help.
+  if (session?.role === "YARD" || session?.role === "OPS_LEAD") {
+    (sosAlerts ?? [])
+      .filter((a) => a.status === "ACTIVE_EMERGENCY")
+      .forEach((a) => {
+        items.push({
+          id: `sos-${a.sos_id}`,
+          title: `SOS — ${a.alert_type?.replace(/_/g, " ") ?? "EMERGENCY"}`,
+          message: `${a.equipment_id} at ${a.location_name ?? "unknown location"}. `
+            + `${a.nearest_hospital?.name ?? "Hospital"} — ambulance ETA `
+            + `${a.nearest_hospital?.eta_minutes ?? "?"} min.`,
+          actor: a.actor,
+          severity: "CRITICAL",
+          timestamp: a.timestamp,
+          path: session?.role === "YARD" ? "/yard" : "/fleet",
+          equipment_id: a.equipment_id,
+        })
+      })
+  }
+
   // Filter out read/dismissed items
+  // An SOS goes to the top, always. Everything else here is money; this one is a
+  // person. Burying it under four telemetry flags would defeat the point of the bell.
+  items.sort((a, b) => {
+    const sos = (i: NotificationItem) => (i.id.startsWith("sos-") ? 0 : 1)
+    return sos(a) - sos(b)
+  })
+
   const unread = items.filter((item) => !readIds.has(item.id))
 
   // Real-time floating toast popup: automatically disappears after 5 seconds

@@ -88,7 +88,11 @@ export default function AccountMenu() {
           </p>
 
           <button
-            onClick={() => { signOut(); setOpen(false); nav("/") }}
+            onClick={() => {
+              // NOT "/" - the landing page holds a scroll lock and has nothing
+              // beneath it, so signing out there looks like the page froze.
+              signOut(); setOpen(false); nav("/signin", { replace: true })
+            }}
             className="w-full px-4 py-3 text-left font-mono text-[11px] uppercase tracking-[0.14em] text-steel transition-colors hover:bg-raised hover:text-hazard"
           >
             Sign out

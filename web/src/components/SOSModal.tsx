@@ -65,8 +65,14 @@ export default function SOSModal({
     }
   }, [open])
 
+  // Whether the alert reached the server, and why not if it did not.
+  const [queuedOnly, setQueuedOnly] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+
   async function handleTriggerSOS() {
     setLoading(true)
+    setSendError(null)
+    setQueuedOnly(false)
     const timestamp = new Date().toISOString()
     const sos_id = `SOS-CAT-${Date.now().toString().slice(-5)}`
 
@@ -98,9 +104,16 @@ export default function SOSModal({
     // Always store locally so offline dashboards see it immediately!
     saveStoredSOSAlert(alertPayload)
 
+    // The confirmation has to describe what ACTUALLY happened. Showing a dispatch that
+    // never left the browser is the worst thing an emergency screen can do - it tells
+    // somebody help is on the way when nothing was sent. So the server's own row wins,
+    // and a failed transmission is reported as a failure rather than hidden.
+    let sent: SOSAlert | null = null
+    let failure: string | null = null
+
     try {
       if (!forceOffline && navigator.onLine) {
-        await api.sendSOS({
+        sent = await api.sendSOS({
           equipment_id: equipmentId,
           actor: actor(),
           alert_type: alertType,
@@ -111,11 +124,14 @@ export default function SOSModal({
           offline_mode: false,
         })
       }
-    } catch {
-      /* offline fallback active */
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "the alert could not be transmitted"
     } finally {
-      setActiveSOS(alertPayload)
-      if (onSuccess) onSuccess(alertPayload)
+      setSendError(failure)
+      // Queued-only means: it is saved on this device and nobody else has seen it.
+      setQueuedOnly(!sent)
+      setActiveSOS(sent ?? alertPayload)
+      if (onSuccess) onSuccess(sent ?? alertPayload)
       setLoading(false)
     }
   }
@@ -282,10 +298,33 @@ export default function SOSModal({
             ) : (
               /* SOS Active Alert Confirmation Card */
               <div className="flex flex-col gap-4 rise-in">
+                {/* What actually happened, stated plainly. A green tick over a failed
+                    transmission is the one thing this screen must never show. */}
+                {queuedOnly && (
+                  <div className="border-2 border-warning bg-warning/15 px-4 py-3">
+                    <p className="font-mono text-[11px] font-extrabold uppercase tracking-[0.12em] text-warning">
+                      not transmitted &mdash; saved on this device only
+                    </p>
+                    <p className="mt-1.5 text-[12.5px] leading-relaxed text-chalk">
+                      Nobody at the yard has seen this yet. It will be sent when the
+                      connection returns.{sendError ? ` (${sendError})` : ""}
+                    </p>
+                    <button
+                      onClick={handleTriggerSOS}
+                      disabled={loading}
+                      className="mt-2.5 border border-warning px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-warning hover:bg-warning hover:text-ground disabled:opacity-50"
+                    >
+                      {loading ? "retrying…" : "try sending again"}
+                    </button>
+                  </div>
+                )}
+
                 <div className="border-2 border-critical bg-critical/15 p-4 flex flex-col gap-2 shadow-inner">
                   <div className="flex items-center justify-between border-b border-critical/30 pb-2">
                     <span className="font-mono text-[11.5px] font-extrabold uppercase text-critical">
-                      ✓ SOS EMERGENCY ACTIVE ({activeSOS.sos_id})
+                      {queuedOnly
+                        ? `! QUEUED ON THIS DEVICE ONLY (${activeSOS.sos_id})`
+                        : `✓ SOS EMERGENCY ACTIVE (${activeSOS.sos_id})`}
                     </span>
                     <span className="px-2 py-0.5 font-mono text-[10px] bg-critical text-ground font-bold uppercase">
                       {activeSOS.nearest_hospital.dispatch_status}

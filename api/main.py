@@ -1414,7 +1414,12 @@ def trigger_sos_alert(body: SOSAlertIn):
     
     append_event(EventIn(
         equipment_id=body.equipment_id,
-        event_type="ANOMALY_FLAG",
+        # CONDITION_LOG, not ANOMALY_FLAG: EventType is a closed Literal in the frozen
+        # schemas.py, and "ANOMALY_FLAG" is not in it. Pydantic rejected every SOS,
+        # throwing 500 AFTER the alert had already been appended - so the alert
+        # existed, the caller got an error, and the UI swallowed it. An SOS is an
+        # incident recorded against a machine, which is what CONDITION_LOG is for.
+        event_type="CONDITION_LOG",
         actor=body.actor,
         notes=f"CRITICAL SOS: {body.alert_type} at {body.location_name}. Hospital Dispatched: {nearest_hospital['name']}"
     ))
