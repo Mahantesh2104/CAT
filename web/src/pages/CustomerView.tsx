@@ -35,8 +35,13 @@ function daysBetween(from: string, to: string) {
 }
 
 function Hire({ a, now, config }: { a: AssetRow; now: string; config?: Config }) {
-  const left = a.due_back ? daysBetween(now, a.due_back) : null
-  const held = a.on_hire_from ? daysBetween(a.on_hire_from, now) : null
+  // A machine standing back in the yard is off hire. Its clock stopped when it was
+  // returned, so measuring "days held" up to today would keep billing a customer for a
+  // machine they gave back in April - the single worst thing this page could get wrong.
+  const back = a.status === "AT_YARD"
+  const until = back ? (a.due_back ?? now) : now
+  const left = !back && a.due_back ? daysBetween(now, a.due_back) : null
+  const held = a.on_hire_from ? Math.max(0, daysBetween(a.on_hire_from, until)) : null
 
   // The customer's own money, worked the way the dealer works it: the day rate spread
   // across the hours the machine is actually on, then charged for the idle ones.
@@ -48,8 +53,9 @@ function Hire({ a, now, config }: { a: AssetRow; now: string; config?: Config })
   const warn = (config?.idle_utilisation_warn ?? 0.35) * 100
   const weak = a.utilization_pct < warn
 
-  const tone =
-    left !== null && left < 0 ? { line: "#ff5b45", text: "text-critical", say: `${-left} days past its return date` }
+  const tone = back
+    ? { line: "#6ea8ff", text: "text-info", say: `returned ${a.due_back ?? ""}`.trim() }
+    : left !== null && left < 0 ? { line: "#ff5b45", text: "text-critical", say: `${-left} days past its return date` }
     : left !== null && left <= 3 ? { line: "#ffab2e", text: "text-warning", say: left === 0 ? "due back today" : `due back in ${left} days` }
     : { line: "#3ddc97", text: "text-nominal", say: left === null ? "no return date set" : `${left} days left on hire` }
 
@@ -73,7 +79,7 @@ function Hire({ a, now, config }: { a: AssetRow; now: string; config?: Config })
           <dd className="num mt-1 text-[14px] text-chalk">{a.on_hire_from ?? "—"}</dd>
         </div>
         <div className="bg-surface px-5 py-3">
-          <dt className="label">due back</dt>
+          <dt className="label">{back ? "returned" : "due back"}</dt>
           <dd className="num mt-1 text-[14px] text-chalk">{a.due_back ?? "—"}</dd>
         </div>
         <div className="bg-surface px-5 py-3">
@@ -93,7 +99,8 @@ function Hire({ a, now, config }: { a: AssetRow; now: string; config?: Config })
       {idleCost > 0 && (
         <p className={cn("border-t border-hairline px-5 py-3 text-[12.5px] leading-relaxed",
           weak ? "text-warning" : "text-steel")}>
-          This machine has been idling {a.idle_hours_day}h a day for {held} days —
+          {back ? "Over its " : "This machine has been idling "}
+          {back ? `${held}-day hire it idled ${a.idle_hours_day}h a day — ` : `${a.idle_hours_day}h a day for ${held} days — `}
           about <span className="num font-semibold">{inr(idleCost)}</span> of hire paid
           for hours it was switched on and producing nothing.
           {weak && " Worth moving it to a busier face, or sending it back early."}
@@ -118,28 +125,35 @@ export default function CustomerView() {
     () => (assets ?? []).filter((a) => a.site_id === site),
     [assets, site],
   )
+  const live = mine.filter((a) => a.status !== "AT_YARD")
 
   const summary = useMemo(() => {
-    const hoursOn = mine.reduce((n, a) => n + a.engine_hours_day + a.idle_hours_day, 0)
-    const engine = mine.reduce((n, a) => n + a.engine_hours_day, 0)
-    // Same care as the yard board: only a machine still on hire can be late or due.
+    // Everything the headline says is about machines STILL OUT. Returned ones are
+    // reported separately, with their final figures, and never added to a running cost.
     const onHire = mine.filter((a) => a.status !== "AT_YARD")
+    const hoursOn = onHire.reduce((n, a) => n + a.engine_hours_day + a.idle_hours_day, 0)
+    const engine = onHire.reduce((n, a) => n + a.engine_hours_day, 0)
     const dueSoon = onHire.filter((a) => {
       if (!a.due_back || !now) return false
       const d = daysBetween(now, a.due_back)
       return d >= 0 && d <= 3
     })
     const late = onHire.filter((a) => a.due_back && now && daysBetween(now, a.due_back) < 0)
+    // Idle cost across every hire, each measured over its own period - live ones to
+    // today, returned ones only to the day they went back.
     const idleCost = mine.reduce((n, a) => {
       const on = a.engine_hours_day + a.idle_hours_day
-      const held = a.on_hire_from && now ? daysBetween(a.on_hire_from, now) : 0
+      const until = a.status === "AT_YARD" ? (a.due_back ?? now) : now
+      const held = a.on_hire_from && now ? Math.max(0, daysBetween(a.on_hire_from, until)) : 0
       return n + (on > 0 ? Math.round((a.day_rate / on) * a.idle_hours_day * held) : 0)
     }, 0)
     return {
-      count: mine.length,
+      count: onHire.length,
+      returned: mine.filter((a) => a.status === "AT_YARD"),
       working: hoursOn > 0 ? Math.round((engine / hoursOn) * 1000) / 10 : 0,
       dueSoon, late, idleCost,
-      dayCost: mine.reduce((n, a) => n + a.day_rate, 0),
+      // Only machines still out cost anything a day.
+      dayCost: onHire.reduce((n, a) => n + a.day_rate, 0),
     }
   }, [mine, now])
 
@@ -224,10 +238,23 @@ export default function CustomerView() {
         </section>
       )}
 
-      {mine.length > 0 && (
+      {live.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {mine.map((a) => <Hire key={a.equipment_id} a={a} now={now} config={config} />)}
+          {live.map((a) => <Hire key={a.equipment_id} a={a} now={now} config={config} />)}
         </div>
+      )}
+
+      {summary.returned.length > 0 && (
+        <section className="flex flex-col gap-4">
+          <p className="label">
+            already returned — closed hires, no longer costing you anything
+          </p>
+          <div className="grid gap-4 opacity-70 lg:grid-cols-2">
+            {summary.returned.map((a) => (
+              <Hire key={a.equipment_id} a={a} now={now} config={config} />
+            ))}
+          </div>
+        </section>
       )}
 
       <p className="label leading-relaxed">
