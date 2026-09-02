@@ -101,7 +101,7 @@ export default function Landing() {
         signature={false}
       >
         <Link
-          to="/fleet"
+          to="/signin"
           className="border border-hazard bg-hazard px-6 py-3 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] text-ground transition-opacity hover:opacity-90"
         >
           Open the console
@@ -205,7 +205,7 @@ export default function Landing() {
             <p className="mt-3 text-[14.5px] text-slate">Every one of them traces to a row you gave us.</p>
           </div>
           <Link
-            to="/fleet"
+            to="/signin"
             className="shrink-0 border border-hazard bg-hazard px-8 py-4 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] text-ground transition-opacity hover:opacity-90"
           >
             Open the console →

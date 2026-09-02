@@ -34,10 +34,10 @@ export const api = {
                      bookings: number }>("/health"),
   assets: () => req<AssetRow[]>("/assets"),
 
-  roles: () => req<{ roles: Role[]; admin_required: boolean }>("/auth/roles"),
-  session: (name: string, role: string, access_key?: string) =>
+  roles: () => req<{ roles: Role[]; sites: string[]; admin_required: boolean }>("/auth/roles"),
+  session: (name: string, role: string, access_key?: string, site_id?: string) =>
     req<SessionInfo>("/auth/session",
-        { method: "POST", body: JSON.stringify({ name, role, access_key }) }),
+        { method: "POST", body: JSON.stringify({ name, role, access_key, site_id }) }),
   asset: (id: string) => req<AssetDetail>(`/assets/${id}`),
   anomalies: () => req<Anomaly[]>("/anomalies"),
   alerts: () => req<Alert[]>("/alerts"),

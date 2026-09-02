@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
-import { signIn } from "@/lib/session"
+import { signIn, homeFor } from "@/lib/session"
 import { cn, inr } from "@/lib/utils"
 import RotatingEarth, { type GlobeMarker } from "@/components/ui/wireframe-dotted-globe"
 
@@ -43,6 +43,7 @@ export default function SignIn() {
   const [name, setName] = useState("")
   const [role, setRole] = useState("YARD")
   const [key, setKey] = useState("")
+  const [site, setSite] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
@@ -72,18 +73,28 @@ export default function SignIn() {
   const roles = meta?.roles ?? []
   const chosen = roles.find((r) => r.id === role)
   const needsKey = chosen?.needs_key ?? false
+  // A customer is scoped to the site they rented to; nothing else in the data links a
+  // machine to a customer, so the site is the honest scope.
+  const needsSite = role === "VIEWER"
+  const sites = meta?.sites ?? []
+
+  const ready = name.trim().length >= 2 && (!needsSite || site !== "")
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     // Ref, not state: two fast Enters both pass a state check before React re-renders.
-    if (inFlight.current || name.trim().length < 2) return
+    if (inFlight.current || !ready) return
     inFlight.current = true
     setBusy(true)
     setError(null)
     try {
-      const s = await api.session(name.trim(), role, needsKey ? key : undefined)
+      const s = await api.session(name.trim(), role, needsKey ? key : undefined,
+                                  needsSite ? site : undefined)
       signIn(s, needsKey ? key : undefined)
-      nav(back, { replace: true })
+      // Land where this person belongs. Honouring `from` only when they are allowed
+      // there, so a customer who deep-linked to /fleet still ends up on their own hire.
+      const home = homeFor(s)
+      nav(back !== "/signin" && back.startsWith(home) ? back : home, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : "could not sign you in")
     } finally {
@@ -166,6 +177,24 @@ export default function SignIn() {
               </div>
             </fieldset>
 
+            {needsSite && (
+              <label className="flex flex-col gap-2">
+                <span className="label">which site are you</span>
+                <select
+                  value={site}
+                  onChange={(e) => { setSite(e.target.value); setError(null) }}
+                  className="border border-hairline bg-ground px-3.5 py-3 text-[15px] text-chalk outline-none focus:border-hazard"
+                >
+                  <option value="">choose your site…</option>
+                  {sites.map((sid) => <option key={sid} value={sid}>{sid}</option>)}
+                </select>
+                <span className="text-[11.5px] leading-relaxed text-slate">
+                  You will see only the machines on hire to this site. Nothing from the
+                  rest of the dealer's fleet appears on your screen.
+                </span>
+              </label>
+            )}
+
             {needsKey && (
               <label className="flex flex-col gap-2">
                 <span className="label">dealer access key</span>
@@ -193,7 +222,7 @@ export default function SignIn() {
 
             <button
               type="submit"
-              disabled={busy || name.trim().length < 2}
+              disabled={busy || !ready}
               className="bg-hazard px-5 py-3.5 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] text-ground transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {busy ? "checking…" : "Enter the console"}

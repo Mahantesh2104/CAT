@@ -35,6 +35,40 @@ export interface Session {
   role_label: string
   can_write: boolean
   elevated: boolean
+  /** Set for VIEWER only: the site that customer rented to. Their whole world. */
+  site_id: string | null
+}
+
+/**
+ * Where each role belongs, and what it may open.
+ *
+ * Three different people use this console and they do NOT want the same screen. A
+ * customer wants the machines they are paying for. A yard supervisor wants what is on
+ * the ground and what is coming back. Only the dealer's own operations lead wants the
+ * full board with the rules, the ledger and the rate card on it.
+ *
+ * Routing off that is not decoration - showing a customer the fleet-wide exposure
+ * ledger would be showing them another customer's numbers.
+ */
+export const HOME: Record<string, string> = {
+  VIEWER: "/my-fleet",
+  YARD: "/yard",
+  OPS_LEAD: "/fleet",
+}
+
+const ALLOWED: Record<string, string[]> = {
+  VIEWER: ["/my-fleet"],
+  YARD: ["/yard", "/scan", "/asset"],
+  OPS_LEAD: ["/fleet", "/yard", "/my-fleet", "/scan", "/settings", "/asset"],
+}
+
+export function homeFor(session: Session | null): string {
+  return session ? (HOME[session.role] ?? "/fleet") : "/signin"
+}
+
+export function mayOpen(session: Session | null, path: string): boolean {
+  if (!session) return false
+  return (ALLOWED[session.role] ?? []).some((p) => path === p || path.startsWith(p + "/"))
 }
 
 const KEY = "srt.session"

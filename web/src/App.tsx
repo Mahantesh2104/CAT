@@ -12,17 +12,29 @@ import Scan from "@/pages/Scan"
 import Settings from "@/pages/Settings"
 import SignIn from "@/pages/SignIn"
 import AccountMenu from "@/components/AccountMenu"
+import RequireRole from "@/components/RequireRole"
+import CustomerView from "@/pages/CustomerView"
+import YardBoard from "@/pages/YardBoard"
+import { useSession, mayOpen } from "@/lib/session"
 
+// The full set. Which of these a given person sees is decided by their role, not by
+// hiding links they would get bounced off anyway - a nav that offers a door you cannot
+// open is worse than no door.
 const NAV = [
+  { to: "/my-fleet", label: "My hire" },
+  { to: "/yard", label: "Yard" },
   { to: "/fleet", label: "Fleet" },
   { to: "/scan", label: "Scan" },
   { to: "/settings", label: "Settings" },
 ]
 
 function Chrome({ children }: { children: React.ReactNode }) {
-  const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger })
+  const session = useSession()
+  // Everything below the fleet board belongs to the dealer, not the hirer.
+  const dealer = session?.role === "YARD" || session?.role === "OPS_LEAD"
+  const { data: ledger } = useQuery({ queryKey: ["ledger"], queryFn: api.ledger, enabled: dealer })
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: api.health })
-  const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts })
+  const { data: alerts } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, enabled: dealer })
 
   return (
     <div className="min-h-screen bg-ground">
@@ -45,7 +57,7 @@ function Chrome({ children }: { children: React.ReactNode }) {
           </NavLink>
 
           <nav className="flex items-center gap-1">
-            {NAV.map((n) => (
+            {NAV.filter((n) => mayOpen(session, n.to)).map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -67,8 +79,11 @@ function Chrome({ children }: { children: React.ReactNode }) {
             <span className="label hidden sm:inline">
               clock <span className="text-steel">{health?.now ?? "—"}</span>
             </span>
-            <AlertBell alerts={alerts} />
-            <ValueLedger ledger={ledger} compact />
+            {/* Dealer-internal, both of them: the alert count is the whole fleet's and
+                the recovered figure is the dealer's own ledger. A customer seeing
+                either would be seeing other customers' numbers. */}
+            {dealer && <AlertBell alerts={alerts} />}
+            {dealer && <ValueLedger ledger={ledger} compact />}
             <AccountMenu />
           </div>
         </div>
@@ -101,11 +116,15 @@ export default function App() {
   return (
     <Chrome>
       <Routes>
-        <Route path="/fleet" element={<FleetBoard />} />
-        <Route path="/asset/:id" element={<AssetPanel />} />
-        <Route path="/scan" element={<Scan />} />
-        <Route path="/settings" element={<Settings />} />
+        {/* /signin is the only console route outside the gate, for the obvious reason. */}
         <Route path="/signin" element={<SignIn />} />
+
+        <Route path="/my-fleet" element={<RequireRole><CustomerView /></RequireRole>} />
+        <Route path="/yard" element={<RequireRole><YardBoard /></RequireRole>} />
+        <Route path="/fleet" element={<RequireRole><FleetBoard /></RequireRole>} />
+        <Route path="/asset/:id" element={<RequireRole><AssetPanel /></RequireRole>} />
+        <Route path="/scan" element={<RequireRole><Scan /></RequireRole>} />
+        <Route path="/settings" element={<RequireRole><Settings /></RequireRole>} />
         <Route
           path="*"
           element={<p className="label py-20 text-center">no such screen</p>}

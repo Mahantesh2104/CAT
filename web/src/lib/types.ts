@@ -20,6 +20,9 @@ export interface AssetRow {
   latitude: number | null
   longitude: number | null
   last_fix: string | null
+  on_hire_from: string | null
+  condition_grade: "A" | "B" | "C"
+  hours_since_service: number
 }
 
 export interface AskAnswer {
@@ -229,5 +232,6 @@ export interface SessionInfo {
   role_label: string
   can_write: boolean
   elevated: boolean
+  site_id: string | null
   admin_required: boolean
 }

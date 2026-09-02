@@ -461,6 +461,10 @@ def list_assets():
 
         "due_back": a.check_in_date, "day_rate": intelligence.day_rate(a, CONFIG),
 
+        "on_hire_from": a.check_out_date, "condition_grade": a.condition_grade,
+
+        "hours_since_service": a.hours_since_service,
+
         "flags_count": sum(1 for f in flags if f.equipment_id == a.equipment_id),
 
         "latitude": _last_fix(a.equipment_id)[0],
@@ -1182,6 +1186,20 @@ class SessionRequest(BaseModel):
     name: str = Field(min_length=2, max_length=60)
     role: str
     access_key: Optional[str] = None
+    # A viewer is a customer, and a customer is scoped to the site they rented to.
+    # Nothing in this data links an asset to a customer - inventing that column would
+    # be a lie - so the site is the scope, and it is validated against the real ones.
+    site_id: Optional[str] = None
+
+
+def _sites() -> list[str]:
+
+    """Every site currently holding a machine. Derived, never a hard-coded list."""
+
+    return sorted({a.site_id for a in ASSETS if a.site_id})
+
+
+
 
 
 @app.get("/auth/roles")
@@ -1198,7 +1216,7 @@ def auth_roles():
 
     """
 
-    return {"roles": ROLES, "admin_required": bool(ADMIN_TOKEN)}
+    return {"roles": ROLES, "sites": _sites(), "admin_required": bool(ADMIN_TOKEN)}
 
 
 
@@ -1229,6 +1247,24 @@ def auth_session(body: SessionRequest):
     if role is None:
 
         raise HTTPException(status_code=422, detail=f"unknown role {body.role!r}")
+
+
+
+    site = body.site_id
+
+    if role["id"] == "VIEWER":
+
+        if not site:
+
+            raise HTTPException(status_code=422, detail="a viewer must say which site they are")
+
+        if site not in _sites():
+
+            raise HTTPException(status_code=422, detail=f"no site {site!r} on this board")
+
+    else:
+
+        site = None
 
 
 
@@ -1265,6 +1301,8 @@ def auth_session(body: SessionRequest):
         "can_write": role["can_write"],
 
         "elevated": elevated,
+
+        "site_id": site,
 
         "admin_required": bool(ADMIN_TOKEN),
 
