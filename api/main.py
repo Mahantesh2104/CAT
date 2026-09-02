@@ -36,7 +36,7 @@ import uuid
 
 from datetime import date, datetime
 
-from typing import Optional
+from typing import Literal, Optional
 
 
 
@@ -1312,6 +1312,68 @@ def auth_session(body: SessionRequest):
 
 
 
+# ============================================================== hire requests
+# A customer asking to keep a machine longer, or to have it collected. schemas.py is
+# frozen and EventType is a closed literal, so these live in their own store rather than
+# being forced into the rental log - a request is not a status change, it is a message
+# about one, and conflating the two would corrupt the projection the whole board reads.
+
+HIRE_REQUESTS: list[dict] = []
+
+
+class HireRequest(BaseModel):
+    equipment_id: str
+    kind: Literal["EXTEND", "COLLECT"]
+    actor: str = Field(min_length=2, max_length=60)
+    site_id: Optional[str] = None
+    days: Optional[int] = Field(default=None, ge=1, le=365)
+    note: Optional[str] = Field(default=None, max_length=MAX_TEXT)
+
+
+@app.post("/hire-request", status_code=201)
+
+def raise_hire_request(body: HireRequest):
+
+    """Raised by a hirer, worked by the yard. Append-only, like everything else here."""
+
+    _find(body.equipment_id)          # 404s on a machine that does not exist
+
+    row = {
+
+        "request_id": f"REQ{len(HIRE_REQUESTS) + 1:04d}",
+
+        "raised_at": datetime.now().isoformat(timespec="seconds"),
+
+        "status": "OPEN",
+
+        **body.model_dump(),
+
+    }
+
+    HIRE_REQUESTS.append(row)
+
+    return row
+
+
+
+
+
+@app.get("/hire-requests")
+
+def list_hire_requests(site_id: Optional[str] = Query(default=None)):
+
+    """The yard sees everything; a hirer sees only their own site's."""
+
+    if site_id:
+
+        return [r for r in HIRE_REQUESTS if r.get("site_id") == site_id]
+
+    return HIRE_REQUESTS
+
+
+
+
+
 @app.get("/maintenance-risk")
 
 def maintenance_risk():
@@ -1440,6 +1502,7 @@ def reset(_: None = Depends(require_admin)):
 
     ASSETS = _load_assets()
 
+    HIRE_REQUESTS.clear()
     TELEMETRY = _load_telemetry()
 
     EVENTS = _load_events()

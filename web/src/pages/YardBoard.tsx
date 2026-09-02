@@ -150,6 +150,9 @@ export default function YardBoard() {
   const { data: assets, isLoading, error: dead, retry } = useResilientQuery(["assets"], api.assets)
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: api.config, refetchInterval: false })
   const { data: health } = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: false })
+  // What hirers have asked for. This is the other half of the customer page: a request
+  // raised there has to land somewhere a person actually works, or it is theatre.
+  const { data: requests } = useQuery({ queryKey: ["hire-requests"], queryFn: () => api.hireRequests() })
   const now = health?.now ?? ""
 
   const groups = useMemo(() => {
@@ -257,6 +260,34 @@ export default function YardBoard() {
           </div>
         ))}
       </div>
+
+      {(requests?.length ?? 0) > 0 && (
+        <section className="border border-hazard/40 bg-hazard/[0.05]">
+          <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-hazard/30 px-5 py-3.5">
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.16em] text-hazard">
+              Customers have asked for these
+            </h2>
+            <span className="num text-[13px] font-semibold text-hazard">{requests!.length}</span>
+          </header>
+          <ul className="flex flex-col">
+            {requests!.map((r) => (
+              <li key={r.request_id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hairline/60 px-5 py-3 last:border-0">
+                <span className="num text-[13px] font-semibold text-chalk">{r.equipment_id}</span>
+                <span className={cn("border px-1.5 py-px font-mono text-[9.5px] uppercase tracking-[0.12em]",
+                  r.kind === "COLLECT" ? "border-info/50 text-info" : "border-warning/50 text-warning")}>
+                  {r.kind === "COLLECT" ? "collect it" : "extend it"}
+                </span>
+                <span className="text-[13px] text-steel">{r.actor}</span>
+                {r.site_id && <span className="num text-[12px] text-slate">{r.site_id}</span>}
+                {r.note && <span className="text-[12.5px] text-slate">— {r.note}</span>}
+                <span className="num ml-auto text-[11.5px] text-slate">
+                  {r.raised_at.replace("T", " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <Group title="Standing in the yard" tone="text-nominal" rows={groups.yard}
              note="Nothing is standing idle in the yard — everything is out earning."

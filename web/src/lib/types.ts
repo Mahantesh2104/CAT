@@ -235,3 +235,15 @@ export interface SessionInfo {
   site_id: string | null
   admin_required: boolean
 }
+
+export interface HireRequestRow {
+  request_id: string
+  raised_at: string
+  status: string
+  equipment_id: string
+  kind: "EXTEND" | "COLLECT"
+  actor: string
+  site_id: string | null
+  days: number | null
+  note: string | null
+}

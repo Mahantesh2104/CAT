@@ -2,7 +2,7 @@
 import { accessKey } from "./session"
 import type {
   AssetRow, AssetDetail, Anomaly, Alert, MaintenanceRisk, AvailabilityAnswer,
-  Ledger, Config, UsageSummary, Briefing, AskAnswer, Forecast, Role, SessionInfo,
+  Ledger, Config, UsageSummary, Briefing, AskAnswer, Forecast, Role, SessionInfo, HireRequestRow,
 } from "./types"
 
 const BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000").replace(/\/$/, "")
@@ -33,6 +33,13 @@ export const api = {
                      telemetry_snapshots: number; events: number
                      bookings: number }>("/health"),
   assets: () => req<AssetRow[]>("/assets"),
+
+  hireRequests: (site_id?: string) =>
+    req<HireRequestRow[]>(`/hire-requests${site_id ? `?site_id=${encodeURIComponent(site_id)}` : ""}`),
+  raiseHireRequest: (body: {
+    equipment_id: string; kind: "EXTEND" | "COLLECT"; actor: string
+    site_id?: string; days?: number; note?: string
+  }) => req<HireRequestRow>("/hire-request", { method: "POST", body: JSON.stringify(body) }),
 
   roles: () => req<{ roles: Role[]; sites: string[]; admin_required: boolean }>("/auth/roles"),
   session: (name: string, role: string, access_key?: string, site_id?: string) =>
