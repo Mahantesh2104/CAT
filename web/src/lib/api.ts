@@ -1,18 +1,23 @@
 // The one fetch wrapper. Base URL from env, so localhost -> production is one variable.
+import { accessKey } from "./session"
 import type {
   AssetRow, AssetDetail, Anomaly, Alert, MaintenanceRisk, AvailabilityAnswer,
-  Ledger, Config, UsageSummary, Briefing, AskAnswer, Forecast,
+  Ledger, Config, UsageSummary, Briefing, AskAnswer, Forecast, Role, SessionInfo,
 } from "./types"
 
 const BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000").replace(/\/$/, "")
-const ADMIN = import.meta.env.VITE_ADMIN_TOKEN as string | undefined
+// Prefer the key typed at sign-in. VITE_ADMIN_TOKEN remains only so an existing
+// local setup keeps working - it is compiled into the shipped bundle, so it must
+// never be set on a public deployment. See DEPLOY.md.
+const BUILT_IN = import.meta.env.VITE_ADMIN_TOKEN as string | undefined
 
 async function req<T>(path: string, init?: RequestInit, idempotencyKey?: string): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey
   // The API gates /reset and PUT /config behind this header when ADMIN_TOKEN is set
   // on the server. Unset locally, so development is unaffected.
-  if (ADMIN) headers["X-Admin-Token"] = ADMIN
+  const admin = accessKey() ?? BUILT_IN
+  if (admin) headers["X-Admin-Token"] = admin
 
   const res = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...init?.headers } })
   if (!res.ok) {
@@ -24,8 +29,15 @@ async function req<T>(path: string, init?: RequestInit, idempotencyKey?: string)
 
 export const api = {
   base: BASE,
-  health: () => req<{ ok: boolean; now: string; assets: number }>("/health"),
+  health: () => req<{ ok: boolean; now: string; assets: number
+                     telemetry_snapshots: number; events: number
+                     bookings: number }>("/health"),
   assets: () => req<AssetRow[]>("/assets"),
+
+  roles: () => req<{ roles: Role[]; admin_required: boolean }>("/auth/roles"),
+  session: (name: string, role: string, access_key?: string) =>
+    req<SessionInfo>("/auth/session",
+        { method: "POST", body: JSON.stringify({ name, role, access_key }) }),
   asset: (id: string) => req<AssetDetail>(`/assets/${id}`),
   anomalies: () => req<Anomaly[]>("/anomalies"),
   alerts: () => req<Alert[]>("/alerts"),

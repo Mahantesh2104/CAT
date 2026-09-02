@@ -214,3 +214,20 @@ export interface Forecast {
     alternatives: string[]
   } | null
 }
+
+export interface Role {
+  id: string
+  label: string
+  blurb: string
+  needs_key: boolean
+  can_write: boolean
+}
+
+export interface SessionInfo {
+  actor: string
+  role: string
+  role_label: string
+  can_write: boolean
+  elevated: boolean
+  admin_required: boolean
+}

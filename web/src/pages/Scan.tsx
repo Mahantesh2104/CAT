@@ -5,6 +5,7 @@ import { Html5Qrcode } from "html5-qrcode"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import StatusPill from "@/components/StatusPill"
+import { actor } from "@/lib/session"
 
 const READER_ID = "qr-reader"
 
@@ -194,10 +195,11 @@ export default function Scan() {
     setError(null)
     try {
       if (kind === "OUT") {
-        await api.checkout(code, "scan")
+        await api.checkout(code, actor())
         setMessage(`${code} checked out`)
       } else {
-        await api.checkin(code, detail?.asset.condition_grade ?? "B", "scan", "Returned via QR scan")
+        await api.checkin(code, detail?.asset.condition_grade ?? "B", actor(),
+                          "Returned via QR scan")
         setMessage(`${code} checked in — condition recorded`)
       }
       await refetch()

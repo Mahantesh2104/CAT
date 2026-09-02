@@ -347,3 +347,115 @@ def test_every_forecast_row_names_the_machine_that_covers_it(assets, telemetry, 
     # to send is the one already paid for and doing nothing.
     s003 = next(r for r in rows if r["site_id"] == "S003")
     assert s003["recommendation"]["equipment_id"] == "EQX1007"
+
+
+# ============================================================== 5. IDENTITY
+# Sign-in is an identity, not a second security boundary. These tests pin exactly that:
+# the role ladder is honest about which rung is enforced, the enforced one really is
+# enforced, and nothing here can be talked into granting anything.
+
+def _client(admin_token=None):
+    """A fresh app with ADMIN_TOKEN set or unset - it is read once, at import time.
+
+    No other test in this file imports main, so re-importing it here cannot disturb
+    them, and each call starts the app from the seed files again.
+    """
+    import importlib
+    import os
+    import sys
+    from fastapi.testclient import TestClient
+
+    if admin_token is None:
+        os.environ.pop("ADMIN_TOKEN", None)
+    else:
+        os.environ["ADMIN_TOKEN"] = admin_token
+    sys.modules.pop("main", None)
+    return TestClient(importlib.import_module("main").app)
+
+
+def test_role_ladder_says_which_rung_is_actually_enforced():
+    client = _client(admin_token="pin-me")
+    body = client.get("/auth/roles").json()
+
+    ids = [r["id"] for r in body["roles"]]
+    assert ids == ["VIEWER", "YARD", "OPS_LEAD"]
+    assert body["admin_required"] is True
+
+    needs = {r["id"]: r["needs_key"] for r in body["roles"]}
+    # Exactly one rung is gated, and it is the one that reaches the destructive routes.
+    assert needs == {"VIEWER": False, "YARD": False, "OPS_LEAD": True}
+
+    writes = {r["id"]: r["can_write"] for r in body["roles"]}
+    assert writes == {"VIEWER": False, "YARD": True, "OPS_LEAD": True}
+
+
+def test_elevation_requires_the_key_and_refuses_a_wrong_one():
+    client = _client(admin_token="pin-me")
+
+    # An ungated role never claims elevation, however it is asked for.
+    yard = client.post("/auth/session", json={"name": "Neerav Babel", "role": "YARD"})
+    assert yard.status_code == 200
+    assert yard.json()["elevated"] is False
+    assert yard.json()["actor"] == "Neerav Babel"
+
+    # A gated role with no key at all.
+    assert client.post("/auth/session",
+                       json={"name": "Neerav Babel", "role": "OPS_LEAD"}).status_code == 401
+
+    # A gated role with the wrong key.
+    assert client.post("/auth/session",
+                       json={"name": "Neerav Babel", "role": "OPS_LEAD",
+                             "access_key": "guess"}).status_code == 401
+
+    # And the right one.
+    ok = client.post("/auth/session",
+                     json={"name": "Neerav Babel", "role": "OPS_LEAD", "access_key": "pin-me"})
+    assert ok.status_code == 200 and ok.json()["elevated"] is True
+
+
+def test_signing_in_grants_nothing_the_server_was_not_already_checking():
+    """The whole security claim of this feature, in one test.
+
+    A session is not a credential. Having called /auth/session successfully must leave
+    the destructive routes exactly as protected as they were before - they re-check the
+    key on every call, and a caller who omits it is refused no matter who they said
+    they were.
+    """
+    client = _client(admin_token="pin-me")
+
+    signed_in = client.post("/auth/session",
+                            json={"name": "Prajwal Patil", "role": "OPS_LEAD",
+                                  "access_key": "pin-me"})
+    assert signed_in.status_code == 200 and signed_in.json()["elevated"] is True
+
+    # Same client, same "session", no header: still refused.
+    assert client.post("/reset").status_code == 401
+    assert client.put("/config", json={"day_rates": {"Excavator": 99}}).status_code == 401
+
+    # The header is the only thing that ever mattered.
+    assert client.post("/reset", headers={"X-Admin-Token": "pin-me"}).status_code == 200
+
+
+def test_an_unknown_role_cannot_be_invented_by_the_caller():
+    client = _client(admin_token="pin-me")
+    assert client.post("/auth/session",
+                       json={"name": "Someone Else", "role": "SUPERUSER"}).status_code == 422
+    # And a name too short to identify anybody is rejected by the schema.
+    assert client.post("/auth/session",
+                       json={"name": "x", "role": "YARD"}).status_code == 422
+
+
+def test_an_instance_with_no_key_configured_says_so_instead_of_pretending():
+    """Locally ADMIN_TOKEN is usually unset. The screen must not imply a guard exists."""
+    client = _client(admin_token=None)
+
+    body = client.get("/auth/roles").json()
+    assert body["admin_required"] is False
+
+    # Elevation is granted because there is nothing to check - and admin_required tells
+    # the UI to say exactly that rather than showing a reassuring "key verified" badge.
+    open_instance = client.post("/auth/session",
+                                json={"name": "Prajwal Patil", "role": "OPS_LEAD"})
+    assert open_instance.status_code == 200
+    assert open_instance.json()["elevated"] is True
+    assert open_instance.json()["admin_required"] is False

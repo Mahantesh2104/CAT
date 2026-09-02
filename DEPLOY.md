@@ -68,16 +68,15 @@ but cloned the whole repo.
 
 > ### Do NOT set `VITE_ADMIN_TOKEN` on Vercel
 >
-> Vite compiles every `VITE_*` variable into the JavaScript it ships. I tested this with a
-> canary value and found it in plain text inside `dist/assets/index-*.js` — anyone who
-> opens DevTools on your public site would read it, and the admin guard you set up in Step
-> 1 would be worth nothing.
+> Vite compiles every `VITE_*` variable into the JavaScript it ships. I tested this with
+> a canary value and found it in plain text inside `dist/assets/index-*.js` — anyone who
+> opened DevTools on your public site would read it, and the admin guard from Step 1
+> would be worth nothing.
 >
-> The cost of leaving it unset is small and correct: on the deployed site, **Settings can
-> be viewed but not saved**, and `/reset` is refused. Everything the demo actually shows —
-> the board, briefing, forecast, availability, ledger, maintenance, scan, assistant — works
-> normally, because none of it is admin-gated. Demo the live rate-card editing from
-> `localhost`, where the token sits in your shell and never reaches a browser bundle.
+> **You no longer need it.** Sign-in asks for the dealer access key at runtime and holds
+> it in `sessionStorage` for that one browser tab, so the elevated role works on the
+> deployed site without the key ever entering the bundle. Leave `VITE_ADMIN_TOKEN` unset
+> and sign in as **Operations lead** instead.
 
 ---
 

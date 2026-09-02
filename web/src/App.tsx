@@ -10,6 +10,8 @@ import FleetBoard from "@/pages/FleetBoard"
 import AssetPanel from "@/pages/AssetPanel"
 import Scan from "@/pages/Scan"
 import Settings from "@/pages/Settings"
+import SignIn from "@/pages/SignIn"
+import AccountMenu from "@/components/AccountMenu"
 
 const NAV = [
   { to: "/fleet", label: "Fleet" },
@@ -67,6 +69,7 @@ function Chrome({ children }: { children: React.ReactNode }) {
             </span>
             <AlertBell alerts={alerts} />
             <ValueLedger ledger={ledger} compact />
+            <AccountMenu />
           </div>
         </div>
       </header>
@@ -102,6 +105,7 @@ export default function App() {
         <Route path="/asset/:id" element={<AssetPanel />} />
         <Route path="/scan" element={<Scan />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/signin" element={<SignIn />} />
         <Route
           path="*"
           element={<p className="label py-20 text-center">no such screen</p>}

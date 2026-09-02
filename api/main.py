@@ -1140,6 +1140,140 @@ def forecast():
 
 
 
+# ============================================================== identity
+# Signing in answers "who is acting", which is the question the event log exists to
+# answer. It is NOT a second security boundary bolted on beside the first: the only
+# thing that has ever protected the destructive routes is ADMIN_TOKEN, checked in
+# require_admin, and that is still the only thing protecting them. What sign-in adds
+# is (a) a real actor on every event instead of the string "scan", and (b) a place to
+# type the dealer key at runtime, so it stops being compiled into the front-end bundle.
+#
+# There are deliberately no passwords and no user store. A hand-rolled password file
+# sitting beside the seed data would be the largest attack surface in this project and
+# the weakest thing in it. Roles here describe INTENT, and only the elevated one is
+# enforced - by the key the server already checks.
+
+ROLES = [
+    {
+        "id": "VIEWER",
+        "label": "Viewer",
+        "blurb": "Read the board. Cannot change anything.",
+        "needs_key": False,
+        "can_write": False,
+    },
+    {
+        "id": "YARD",
+        "label": "Yard supervisor",
+        "blurb": "Check machines in and out, assign sites and operators, log usage.",
+        "needs_key": False,
+        "can_write": True,
+    },
+    {
+        "id": "OPS_LEAD",
+        "label": "Operations lead",
+        "blurb": "Everything a supervisor can do, plus the rate card and a board reset.",
+        "needs_key": True,
+        "can_write": True,
+    },
+]
+
+
+class SessionRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=60)
+    role: str
+    access_key: Optional[str] = None
+
+
+@app.get("/auth/roles")
+
+def auth_roles():
+
+    """What the sign-in screen offers, so the UI does not hard-code the ladder.
+
+
+
+    admin_required reports whether this deployment has ADMIN_TOKEN set at all. Locally
+
+    it usually is not, and the screen says so rather than pretending to guard.
+
+    """
+
+    return {"roles": ROLES, "admin_required": bool(ADMIN_TOKEN)}
+
+
+
+
+
+@app.post("/auth/session")
+
+def auth_session(body: SessionRequest):
+
+    """Verify an identity the caller is claiming, and the key if the role needs one.
+
+
+
+    This issues no token and stores no session. It cannot: the server is stateless
+
+    about who you are, and the routes that matter re-check ADMIN_TOKEN on every single
+
+    call regardless of what happened here. The endpoint exists so the sign-in screen
+
+    can tell you immediately that a key is wrong, instead of letting you find out from
+
+    a 401 three clicks later.
+
+    """
+
+    role = next((r for r in ROLES if r["id"] == body.role), None)
+
+    if role is None:
+
+        raise HTTPException(status_code=422, detail=f"unknown role {body.role!r}")
+
+
+
+    elevated = False
+
+    if role["needs_key"]:
+
+        if not ADMIN_TOKEN:
+
+            # No key configured on this instance, so there is nothing to check against.
+
+            # Say so plainly rather than granting an elevation that means nothing.
+
+            elevated = True
+
+        elif body.access_key == ADMIN_TOKEN:
+
+            elevated = True
+
+        else:
+
+            raise HTTPException(status_code=401, detail="that dealer access key is not right")
+
+
+
+    return {
+
+        "actor": body.name.strip(),
+
+        "role": role["id"],
+
+        "role_label": role["label"],
+
+        "can_write": role["can_write"],
+
+        "elevated": elevated,
+
+        "admin_required": bool(ADMIN_TOKEN),
+
+    }
+
+
+
+
+
 @app.get("/maintenance-risk")
 
 def maintenance_risk():
