@@ -25,6 +25,13 @@ export function saveStoredSOSAlert(alert: SOSAlert) {
   }
 }
 
+export function dropStoredSOSAlert(sos_id: string) {
+  try {
+    const existing = getStoredSOSAlerts().filter((a) => a.sos_id !== sos_id)
+    localStorage.setItem(OFFLINE_SOS_KEY, JSON.stringify(existing))
+  } catch { /* storage unavailable; nothing to drop */ }
+}
+
 export function resolveStoredSOSAlert(sos_id: string) {
   try {
     const existing = getStoredSOSAlerts()
@@ -130,6 +137,15 @@ export default function SOSModal({
       setSendError(failure)
       // Queued-only means: it is saved on this device and nobody else has seen it.
       setQueuedOnly(!sent)
+      if (sent) {
+        // Replace the local placeholder with the server's row. They carry different
+        // ids - ours is SOS-CAT-<time>, the server's is SOS0002 - and if the stored
+        // copy keeps the local one, "Mark Resolved" posts an id the server has never
+        // seen, gets {ok:true} back, resolves nothing, and the banner returns on the
+        // next two-second poll. An emergency banner nobody can dismiss.
+        dropStoredSOSAlert(alertPayload.sos_id)
+        saveStoredSOSAlert(sent)
+      }
       setActiveSOS(sent ?? alertPayload)
       if (onSuccess) onSuccess(sent ?? alertPayload)
       setLoading(false)

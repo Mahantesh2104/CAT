@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import type { SOSAlert } from "@/lib/types"
-import { getStoredSOSAlerts, resolveStoredSOSAlert } from "./SOSModal"
+import { getStoredSOSAlerts, resolveStoredSOSAlert, dropStoredSOSAlert } from "./SOSModal"
 
 export default function SOSBanner() {
   const [offlineAlerts, setOfflineAlerts] = useState<SOSAlert[]>([])
@@ -44,7 +44,10 @@ export default function SOSBanner() {
   if (activeAlerts.length === 0) return null
 
   async function handleResolve(sos_id: string) {
+    // Clear it locally AND drop it, so an orphan row from an older build - one whose
+    // id the server never issued - cannot keep the banner alive forever.
     resolveStoredSOSAlert(sos_id)
+    dropStoredSOSAlert(sos_id)
     try {
       await api.resolveSOS(sos_id)
     } catch {
