@@ -184,7 +184,64 @@ cross-check, not a replacement.
 
 ---
 
-## 8. Two things the demo script must be updated for
+## 8. "Is that real authentication?"
+
+Answer the narrow question first, because the honest answer is stronger than the
+flattering one and a judge will find the seam anyway.
+
+> It is a real enforcement boundary and an honest audit trail. It is not identity — and
+> it is one function away from being identity.
+
+**What is actually enforced.** One server-side secret, `ADMIN_TOKEN`, checked in
+`require_admin` on every call to the two state-changing routes. It is an environment
+variable in the host's secret store, in no file in this repository, typed at sign-in and
+held in `sessionStorage` for one browser tab. Signing in issues no token and stores no
+session: `/reset` and `PUT /config` re-check the header every time regardless of who you
+said you were, which is pinned by a test.
+
+**What is not.** The name on the session is self-declared. Nothing stops somebody typing
+a colleague's name, so the event log is **attributable, not authenticated**. And a single
+shared key cannot be revoked for one person, does not record which person used it, and
+has to be rotated for everybody when one of them leaves.
+
+**Why we built it that way.** The alternative was a hand-rolled password store sitting
+beside the seed data — argon2 hashes, session tokens, reset flows, rate limiting. That
+would have been the largest attack surface in this project and the weakest thing in it,
+and defending it to you would have been worse than defending this. What sign-in buys is
+narrower and real: every check-out, assignment and usage row now carries a name instead
+of the literal string `"scan"`, which is the *who* in the kickoff deck's own design
+principle on the Experience slide — every status change answers who, what, where and
+when. It was the only one of those four the log could not actually
+answer. It also took the dealer key out of the shipped bundle, where a `VITE_*`
+variable would have published it to every visitor.
+
+### The swap, if asked what production looks like
+
+> Replace `require_admin` with an OIDC bearer-token check against the dealer's own
+> identity provider, and read the actor from the verified token instead of the form
+> field. Dealers already have an IdP and do not want another password.
+
+Concretely, and it is genuinely this small:
+
+| Today | Production |
+|---|---|
+| `require_admin` compares a header to one shared secret | validates a JWT: signature against the IdP's JWKS, `iss`, `aud`, `exp` |
+| role is claimed by the sign-in form | role comes from the token's group or role claim |
+| actor is typed by the user | actor is the token's `sub` / `email` |
+| revoke = rotate the key for everyone | revoke = disable one account at the IdP |
+
+**One function and one field.** Nothing downstream moves, because every consumer already
+reads `actor` off the event log rather than off the session — the log does not care how
+the name was established, only that one was. The role ladder, the route guard and all
+three consoles are unchanged; `ROLES` stops being a constant and becomes a claim mapping.
+
+The reason it is that small is a decision made early: identity was never allowed to
+become a second source of truth. The server has always trusted exactly one thing, and
+replacing that one thing is the whole migration.
+
+---
+
+## 9. Two things the demo script must be updated for
 
 1. **Beat 4 commits EQX1007, not EQX1004.** The ranking returns the machine that is
    already sitting in the yard doing nothing, at confidence 1.00, ahead of the one
@@ -196,7 +253,7 @@ cross-check, not a replacement.
 
 ---
 
-## 9. The one-line answers
+## 10. The one-line answers
 
 | Question | Answer |
 |---|---|
@@ -206,3 +263,4 @@ cross-check, not a replacement.
 | Where is the ML? | One least-squares slope. Everything else is a rule, on purpose. |
 | Why no forecast? | You asked a commitment question, and the data has no demand signal to forecast. |
 | What is it worth? | ₹6,20,000 of zero-output rental, on your own numbers. |
+| Is the login real? | The key is enforced server-side on every write. The name is not verified — swap `require_admin` for an OIDC check and the actor comes from the token. |
