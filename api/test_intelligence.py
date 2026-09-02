@@ -354,27 +354,37 @@ def test_every_forecast_row_names_the_machine_that_covers_it(assets, telemetry, 
 # the role ladder is honest about which rung is enforced, the enforced one really is
 # enforced, and nothing here can be talked into granting anything.
 
-def _client(admin_token=None):
-    """A fresh app with ADMIN_TOKEN set or unset - it is read once, at import time.
+@pytest.fixture
+def app_client(monkeypatch):
+    """Build the app with ADMIN_TOKEN set or unset - it is read once, at import time.
 
-    No other test in this file imports main, so re-importing it here cannot disturb
-    them, and each call starts the app from the seed files again.
+    Everything here is torn down afterwards. Without that, setting the variable and
+    re-importing main leaks into every later test in the suite: the app object they
+    import still carries a token they know nothing about, and every admin route they
+    touch returns 401. That is exactly what happened, and it is why this is a fixture
+    rather than a plain helper.
     """
     import importlib
-    import os
     import sys
     from fastapi.testclient import TestClient
 
-    if admin_token is None:
-        os.environ.pop("ADMIN_TOKEN", None)
-    else:
-        os.environ["ADMIN_TOKEN"] = admin_token
+    def make(admin_token=None):
+        if admin_token is None:
+            monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+        else:
+            monkeypatch.setenv("ADMIN_TOKEN", admin_token)
+        sys.modules.pop("main", None)
+        return TestClient(importlib.import_module("main").app)
+
+    yield make
+
+    # monkeypatch restores the environment; drop the module so the next importer
+    # rebuilds the app against it rather than against ours.
     sys.modules.pop("main", None)
-    return TestClient(importlib.import_module("main").app)
 
 
-def test_role_ladder_says_which_rung_is_actually_enforced():
-    client = _client(admin_token="pin-me")
+def test_role_ladder_says_which_rung_is_actually_enforced(app_client):
+    client = app_client(admin_token="pin-me")
     body = client.get("/auth/roles").json()
 
     ids = [r["id"] for r in body["roles"]]
@@ -389,8 +399,8 @@ def test_role_ladder_says_which_rung_is_actually_enforced():
     assert writes == {"VIEWER": False, "YARD": True, "OPS_LEAD": True}
 
 
-def test_elevation_requires_the_key_and_refuses_a_wrong_one():
-    client = _client(admin_token="pin-me")
+def test_elevation_requires_the_key_and_refuses_a_wrong_one(app_client):
+    client = app_client(admin_token="pin-me")
 
     # An ungated role never claims elevation, however it is asked for.
     yard = client.post("/auth/session", json={"name": "Neerav Babel", "role": "YARD"})
@@ -413,7 +423,7 @@ def test_elevation_requires_the_key_and_refuses_a_wrong_one():
     assert ok.status_code == 200 and ok.json()["elevated"] is True
 
 
-def test_signing_in_grants_nothing_the_server_was_not_already_checking():
+def test_signing_in_grants_nothing_the_server_was_not_already_checking(app_client):
     """The whole security claim of this feature, in one test.
 
     A session is not a credential. Having called /auth/session successfully must leave
@@ -421,7 +431,7 @@ def test_signing_in_grants_nothing_the_server_was_not_already_checking():
     key on every call, and a caller who omits it is refused no matter who they said
     they were.
     """
-    client = _client(admin_token="pin-me")
+    client = app_client(admin_token="pin-me")
 
     signed_in = client.post("/auth/session",
                             json={"name": "Prajwal Patil", "role": "OPS_LEAD",
@@ -436,8 +446,8 @@ def test_signing_in_grants_nothing_the_server_was_not_already_checking():
     assert client.post("/reset", headers={"X-Admin-Token": "pin-me"}).status_code == 200
 
 
-def test_an_unknown_role_cannot_be_invented_by_the_caller():
-    client = _client(admin_token="pin-me")
+def test_an_unknown_role_cannot_be_invented_by_the_caller(app_client):
+    client = app_client(admin_token="pin-me")
     assert client.post("/auth/session",
                        json={"name": "Someone Else", "role": "SUPERUSER"}).status_code == 422
     # And a name too short to identify anybody is rejected by the schema.
@@ -445,9 +455,9 @@ def test_an_unknown_role_cannot_be_invented_by_the_caller():
                        json={"name": "x", "role": "YARD"}).status_code == 422
 
 
-def test_an_instance_with_no_key_configured_says_so_instead_of_pretending():
+def test_an_instance_with_no_key_configured_says_so_instead_of_pretending(app_client):
     """Locally ADMIN_TOKEN is usually unset. The screen must not imply a guard exists."""
-    client = _client(admin_token=None)
+    client = app_client(admin_token=None)
 
     body = client.get("/auth/roles").json()
     assert body["admin_required"] is False

@@ -59,6 +59,7 @@ from schemas import (
 )
 
 import intelligence
+import store
 import assistant
 
 
@@ -117,13 +118,15 @@ DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 
 def _read(name: str) -> list:
 
-    path = DATA / name
+    """Records in, from wherever they live. See store.py - one module touches storage.
 
-    if not path.exists():
+    With DATABASE_URL set these come out of Supabase; without it, off the disk. The
 
-        return []
+    records are identical either way, which store.verify() proves rather than asserts.
 
-    return json.loads(path.read_text(encoding="utf-8"))
+    """
+
+    return store.read(name)
 
 
 
@@ -164,6 +167,9 @@ def _load_events() -> list[RentalEvent]:
 
 
 
+
+# Decide the backend BEFORE the first read, so every loader below agrees.
+STORE_BACKEND = store.init()
 
 ASSETS: list[Asset] = _load_assets()
 
@@ -414,6 +420,23 @@ def _deep_merge(target: dict, patch: dict) -> dict:
 
 
 # ------------------------------------------------------------------ endpoints
+
+@app.get("/storage")
+
+def storage():
+
+    """Which store the API is reading, and whether both agree.
+
+    verify() re-reads the JSON seeds and compares them record for record against
+
+    what came out of Postgres. A demo that claims a database should be able to show
+
+    that swapping it changed nothing about the answers.
+
+    """
+
+    return {"store": store.describe(), "parity": store.verify()}
+
 
 @app.get("/health")
 
